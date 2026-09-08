@@ -193,6 +193,102 @@ rerankedIdx := rag.NewRerankedIndex(baseIndex, myReranker, 3)
 results, _ := rerankedIdx.Query(ctx, "search query", 5)
 ```
 
+## Reading images (upstream #2114)
+
+The Read tool returns image files (`.png .jpg .jpeg .gif .webp .bmp .tiff .ico`)
+as base64 `DataBlock` results instead of mojibake text, on both the host and
+workspace-backend paths. PDF page rendering is not supported (it would require
+a rasterizer dependency).
+
+Every image response also carries a leading text placeholder such as
+`[shot.png: image/png, 12345 bytes]`. The agent's tool pipeline is
+string-based, so without it an image-only result would reach the model as an
+empty string and read as "this file is empty".
+
+Whether the model actually sees the pixels depends on the provider:
+
+| Provider path            | What the model receives                  |
+| ------------------------ | ---------------------------------------- |
+| OpenAI **Responses** API | native `input_image` parts (upstream #2389) |
+| Chat Completions, Anthropic, Gemini, DashScope | the text placeholder only |
+
+There is no capability probe yet (upstream checks `model_input_types`), so
+Read cannot refuse to return an image for a model that cannot see it — it
+degrades to the placeholder.
+
+Images larger than `tool.MaxInlineImageBytes` (256 KB) are reported as text
+instead of inlined. Base64 costs roughly its own file size in estimated tokens,
+so a single 1 MB screenshot would consume on the order of 250k tokens and
+trigger an immediate compression.
+
+`ToolResultBlock.Output` is a plain `string` for text-only results and a
+`[]message.ContentBlock` when a tool returned something non-text. Use
+`GetOutputText()` when you only want the text.
+
+## Agent-driven compression (upstream #2143)
+
+```go
+a := agent.NewUnifiedAgent("bot", "...", cm,
+    agent.WithToolkit(tk),
+    agent.WithContextConfig(&agent.ContextConfig{
+        TriggerRatio: 0.8, // automatic compression fires here
+        // AgentDrivenTriggerRatio: 0.4, // default is TriggerRatio/2
+    }),
+    agent.WithAgentDrivenCompression(), // registers the compress_context tool
+)
+```
+
+The model can call `compress_context` itself when history grows unwieldy,
+instead of waiting for the automatic token-threshold compression.
+
+Three things to know:
+
+- **It compresses at a lower threshold than the automatic path**
+  (`ContextConfig.AgentDrivenTriggerRatio`, default `TriggerRatio/2`). With the
+  same threshold the agent would always compress first and the model could
+  never trigger the tool.
+- **Its reply is honest.** When the context is still below that threshold the
+  tool says nothing was compressed. Claiming success on a no-op teaches the
+  model that details are still available when they are not.
+- **It runs sequentially and needs no confirmation.** The tool rewrites the
+  shared message history, so it is `ConcurrencySafe: false` and never joins a
+  parallel tool batch, and it returns an allow decision so an ASK-mode
+  permission engine does not stall every model-initiated compression.
+
+The compression split also keeps unfinished tool calls out of the summarized
+portion: when the model calls `compress_context` from inside the acting loop,
+the assistant message holding the batch's tool calls is already in the context,
+and summarizing it away would orphan the results that land moments later.
+
+For custom pipelines, wire it manually with `tool.NewCompressContextTool(fn)`,
+where `fn` is a `tool.CompressFunc` returning a `tool.CompressionResult`:
+
+```go
+tk := tool.NewToolkit(
+    tool.ReadTool(),
+    tool.NewCompressContextTool(func(ctx context.Context) (tool.CompressionResult, error) {
+        compressed, err := myCompressor.Run(ctx)
+        return tool.CompressionResult{Compressed: compressed}, err
+    }),
+)
+```
+
+## Schema-guided argument repair (upstream #2496)
+
+Tool-call arguments are repaired in two layers: malformed JSON goes through
+syntax repair, and **every** call is coerced toward the tool's input schema —
+quoted numbers (`"limit":"5"` → `5`), stringified booleans, lone values
+wrapped into arrays, stringified objects parsed. Coercion never drops keys;
+uncoercible values reach JSON-Schema validation unchanged and fail loudly.
+
+## Read cache in workspaces (upstream #2092)
+
+The read cache validates freshness against the filesystem that served the
+read: backends implementing the optional `tool.BackendStatter` interface
+(e.g. `workspace.ToolBackend` via POSIX stat) provide their own mtime, and
+backend writes/edits invalidate cached copies — so `Read` → `Edit` works
+inside Docker/K8s/E2B workspaces.
+
 ## WASM Sandbox
 
 The CLI implementation enforces fuel, linear-memory, timeout, directory-grant, and output-capture settings through Wasmtime. Wasmer and wasm3 may be discovered, but execution with the default resource limits returns `ErrUnsupportedLimits`. Select Wasmtime explicitly and check both errors and result status. Empty `AllowedPaths` grants no host directories.

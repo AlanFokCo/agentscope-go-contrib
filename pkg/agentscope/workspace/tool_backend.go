@@ -2,7 +2,11 @@ package workspace
 
 import (
 	"context"
+	"fmt"
+	pathpkg "path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
@@ -88,3 +92,97 @@ func (b *ToolBackend) Glob(ctx context.Context, pattern string) ([]string, error
 
 // Compile-time check.
 var _ tool.Backend = (*ToolBackend)(nil)
+
+// StatFile implements tool.BackendStatter: it reports file metadata from the
+// workspace's OWN filesystem via a POSIX stat call, so the tool read cache
+// validates freshness against the same filesystem that served the read
+// (upstream #2092). Both GNU (`stat -c %Y`) and BSD/busybox (`stat -f %m`)
+// flag forms are attempted. Granularity is one second — sub-second
+// write/read races can theoretically pass a stale entry; Write/Edit
+// invalidate their cache entries explicitly, which covers the practical
+// Read->Edit flow.
+func (b *ToolBackend) StatFile(ctx context.Context, p string) (tool.BackendFileInfo, error) {
+	cleaned, err := b.jailPath(p)
+	if err != nil {
+		return tool.BackendFileInfo{}, err
+	}
+	// The spelling used inside the shell must name the SAME file ReadFile read,
+	// and that is backend-specific (see ExecPathResolver): Docker/Daytona/
+	// AppleContainer resolve to an absolute in-sandbox path, while K8s, E2B,
+	// OpenSandbox and bubblewrap need the caller-relative form. Getting this
+	// wrong is worse than a wasted exec — a stat that lands on a different file
+	// supplies a freshness key for the wrong file and the read cache can then
+	// serve stale content as fresh.
+	execPath := cleaned
+	if r, ok := b.ws.(ExecPathResolver); ok {
+		execPath = r.ExecPath(cleaned)
+	}
+	// POSIX single-quote escaping: close the quote, emit an escaped quote,
+	// reopen. Inside single quotes the shell gives no special meaning to
+	// backticks, $, spaces or glob characters.
+	quoted := "'" + strings.ReplaceAll(execPath, "'", `'\''`) + "'"
+	cmd := "stat -c %Y " + quoted + " 2>/dev/null || stat -f %m " + quoted
+	res, err := b.ws.Execute(ctx, cmd)
+	if err != nil {
+		return tool.BackendFileInfo{}, err
+	}
+	if res.ExitCode != 0 {
+		return tool.BackendFileInfo{}, fmt.Errorf("workspace stat %s: exit %d: %s", p, res.ExitCode, res.Stderr)
+	}
+	secs, err := strconv.ParseInt(strings.TrimSpace(res.Stdout), 10, 64)
+	if err != nil {
+		return tool.BackendFileInfo{}, fmt.Errorf("workspace stat %s: parse %q: %w", p, res.Stdout, err)
+	}
+	return tool.BackendFileInfo{ModTime: time.Unix(secs, 0)}, nil
+}
+
+// jailPath applies a lexical containment check before StatFile interpolates a
+// path into a shell command.
+//
+// ReadFile/WriteFile go through the workspace's own resolver, which also
+// follows symlinks; StatFile has no such call to lean on, so without this it
+// would be an oracle for the mtime and existence of ANY path the execution
+// user can reach — harmless while it is only called after a successful
+// ReadFile (as the read cache does), but a live information leak the moment
+// someone wires it earlier.
+//
+// Symlinks are deliberately not resolved here: doing so would need a second
+// exec round-trip on every cache probe. The check is containment of the
+// requested path, and the underlying ReadFile remains the authoritative jail.
+func (b *ToolBackend) jailPath(p string) (string, error) {
+	cleaned := pathpkg.Clean(strings.TrimSpace(filepath.ToSlash(p)))
+	if cleaned == "" || cleaned == "." {
+		return "", fmt.Errorf("workspace stat: empty path")
+	}
+	escapes := cleaned == ".." || strings.HasPrefix(cleaned, "../")
+
+	base := pathpkg.Clean(filepath.ToSlash(b.ws.BasePath()))
+	if base == "" || base == "." {
+		// The workspace exposes no base to confine against (a custom
+		// implementation). Only the parent-relative escape can be rejected
+		// from here; the sandbox itself is the boundary.
+		if escapes {
+			return "", fmt.Errorf("%w: %q", ErrPathEscape, p)
+		}
+		return cleaned, nil
+	}
+
+	abs := cleaned
+	if !pathpkg.IsAbs(abs) {
+		abs = pathpkg.Join(base, cleaned)
+	}
+	// Separator-aware: a bare prefix match would admit sibling directories
+	// (base /tmp/ws1 must not admit /tmp/ws123/secret). A base of "/" contains
+	// everything by definition.
+	if base != "/" && abs != base && !strings.HasPrefix(abs, base+"/") {
+		return "", fmt.Errorf("%w: %q", ErrPathEscape, p)
+	}
+	// Containment is judged on the absolute form, but the caller-relative form
+	// is what gets returned: whether the shell needs a relative or an absolute
+	// spelling is backend-specific and is decided by StatFile through
+	// ExecPathResolver. Returning abs unconditionally would be wrong for every
+	// backend whose Execute passes the caller's path straight through (K8s,
+	// E2B, OpenSandbox) and for bubblewrap, whose BasePath is a HOST path while
+	// the sandbox sees that directory as "/".
+	return cleaned, nil
+}

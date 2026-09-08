@@ -129,14 +129,19 @@ func TestTracingMiddleware_ModelCallSpan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(tracer.spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(tracer.spans))
+	// Since upstream #2450 every model call with a response also records a
+	// supplementary chat.response span carrying gen_ai.response.finish_reasons.
+	if len(tracer.spans) != 2 {
+		t.Fatalf("expected 2 spans (chat + chat.response), got %d", len(tracer.spans))
 	}
 	if tracer.spans[0].name != "chat" {
 		t.Errorf("expected 'chat' span, got %q", tracer.spans[0].name)
 	}
 	if !tracer.spans[0].ended {
 		t.Error("chat span should be ended")
+	}
+	if tracer.spans[1].name != "chat.response" {
+		t.Errorf("expected 'chat.response' span, got %q", tracer.spans[1].name)
 	}
 }
 
@@ -192,8 +197,8 @@ func TestTracingMiddleware_NestedSpans(t *testing.T) {
 	for range ch {
 	}
 
-	if len(tracer.spans) != 3 {
-		t.Fatalf("expected 3 nested spans, got %d", len(tracer.spans))
+	if len(tracer.spans) != 4 {
+		t.Fatalf("expected 4 nested spans (invoke_agent/chat/execute_tool/chat.response), got %d", len(tracer.spans))
 	}
 
 	// Verify nesting: invoke_agent -> chat -> execute_tool
@@ -519,8 +524,8 @@ func TestTracingMiddleware_ChatSpanIncludesInputMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(tracer.spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(tracer.spans))
+	if len(tracer.spans) != 2 {
+		t.Fatalf("expected 2 spans (chat + chat.response), got %d", len(tracer.spans))
 	}
 	v, ok := findAttr(tracer.spans[0], "gen_ai.input.messages")
 	if !ok {

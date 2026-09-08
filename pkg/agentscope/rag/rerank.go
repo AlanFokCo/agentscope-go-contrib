@@ -70,7 +70,12 @@ func (r *RerankedIndex) Query(ctx context.Context, query string, topK int) ([]Do
 
 	out := make([]Document, 0, len(scored))
 	for _, sd := range scored {
-		out = append(out, sd.Document)
+		doc := sd.Document
+		// Carry the rerank score onto the Document so Query callers see the
+		// same higher-is-more-relevant number the reranker produced
+		// (upstream #2486; keeps one score model across the pipeline).
+		doc.Score = sd.Score
+		out = append(out, doc)
 	}
 	return out, nil
 }

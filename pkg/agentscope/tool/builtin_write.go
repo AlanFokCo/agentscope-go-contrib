@@ -95,6 +95,11 @@ func (t *writeTool) Execute(ctx context.Context, args map[string]any) (*ToolResp
 		if err := b.WriteFile(ctx, p, []byte(content)); err != nil {
 			return NewErrorResponse(fmt.Errorf("write file: %w", err)), nil
 		}
+		// Upstream #2092: drop any cached copy so the next Read/Edit sees
+		// the new content — the host-side cache cannot stat backend files.
+		if rc := GetReadCache(ctx); rc != nil {
+			rc.Remove(p)
+		}
 		resp := NewTextResponse(fmt.Sprintf("Written %d bytes to %s", len(content), p))
 		if oldContent != "" || content != "" {
 			if diff := generateUnifiedDiff(p, oldContent, content); diff != "" {

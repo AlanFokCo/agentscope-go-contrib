@@ -45,33 +45,90 @@ func NewReadCache(maxFiles, maxBytes int) *ReadCache {
 	}
 }
 
-// GetCache returns the cached entry for the given file path.
-// It validates freshness by checking the file's mtime. If the file has been
-// modified since caching, the stale entry is removed and nil is returned.
-func (rc *ReadCache) GetCache(filePath string) *ReadCacheEntry {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
+// The returned *ReadCacheEntry is always a copy: callers may hold it after
+// the lock is released without racing eviction or Remove. Its Lines slice is
+// shared but never mutated once cached.
 
-	for i, e := range rc.entries {
+// GetCache returns the cached entry for the given file path.
+// It validates freshness by checking the file's mtime on the HOST
+// filesystem. If the file has been modified since caching, the stale entry
+// is removed and nil is returned.
+func (rc *ReadCache) GetCache(filePath string) *ReadCacheEntry {
+	return rc.GetCacheWithMtime(filePath, nil)
+}
+
+// GetCacheWithMtime is GetCache with an explicit freshness mtime obtained
+// from the same filesystem that served the read — e.g. a workspace backend
+// (upstream #2092). A nil mtime falls back to a host os.Stat.
+//
+// The freshness probe runs OUTSIDE the lock (a backend stat can be a
+// network round-trip; serializing all cache reads behind it was already
+// undesirable for host stats), then the entry is re-located and validated
+// under the lock.
+func (rc *ReadCache) GetCacheWithMtime(filePath string, mtime *time.Time) *ReadCacheEntry {
+	rc.mu.Lock()
+	found := false
+	for _, e := range rc.entries {
 		if e.FilePath == filePath {
-			info, err := os.Stat(filePath)
-			if err != nil {
-				rc.removeAt(i)
-				return nil
-			}
-			if !info.ModTime().Equal(e.UpdatedAt) {
-				rc.removeAt(i)
-				return nil
-			}
-			// Upstream #1811: a hit refreshes recency. Without this a
-			// repeatedly-read hot file ages out first under FIFO eviction.
-			entry := rc.entries[i]
-			rc.removeAt(i)
-			rc.entries = append(rc.entries, entry)
-			return &rc.entries[len(rc.entries)-1]
+			found = true
+			break
 		}
 	}
-	return nil
+	rc.mu.Unlock()
+	if !found {
+		return nil
+	}
+
+	var actual time.Time
+	if mtime != nil {
+		actual = *mtime
+	} else {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			rc.Remove(filePath)
+			return nil
+		}
+		actual = info.ModTime()
+	}
+
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	for i, e := range rc.entries {
+		if e.FilePath != filePath {
+			continue
+		}
+		if !actual.Equal(e.UpdatedAt) {
+			rc.removeAt(i)
+			return nil
+		}
+		// Upstream #1811: a hit refreshes recency. Without this a
+		// repeatedly-read hot file ages out first under FIFO eviction.
+		entry := rc.entries[i]
+		rc.removeAt(i)
+		rc.entries = append(rc.entries, entry)
+		// Return a COPY. removeAt shifts elements within the shared backing
+		// array, so a pointer into rc.entries would be read by the caller
+		// while a concurrent Remove (from Write/Edit, upstream #2092) moves
+		// that memory. Concurrent tool batches make Read+Write on one file a
+		// realistic pairing.
+		out := rc.entries[len(rc.entries)-1]
+		return &out
+	}
+	return nil // evicted between the probe and the re-lock
+}
+
+// Remove drops the cached entry for filePath, if any. Write/Edit call it
+// after modifying a file through a backend whose filesystem the cache
+// cannot stat from the host (upstream #2092).
+func (rc *ReadCache) Remove(filePath string) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	for i, e := range rc.entries {
+		if e.FilePath == filePath {
+			rc.removeAt(i)
+			return
+		}
+	}
 }
 
 // HasBeenRead returns true if the file has an entry in the cache (even if stale).
@@ -88,11 +145,25 @@ func (rc *ReadCache) HasBeenRead(filePath string) bool {
 	return false
 }
 
-// CacheFile stores file content in the cache, evicting oldest entries if needed.
+// CacheFile stores file content in the cache, evicting oldest entries if
+// needed. Freshness metadata comes from a host os.Stat.
 func (rc *ReadCache) CacheFile(filePath string, lines []string) {
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return
+	rc.CacheFileWithMtime(filePath, lines, nil)
+}
+
+// CacheFileWithMtime is CacheFile with an explicit mtime obtained from the
+// same filesystem that served the read (upstream #2092). A nil mtime falls
+// back to a host os.Stat, and a failed stat skips caching entirely.
+func (rc *ReadCache) CacheFileWithMtime(filePath string, lines []string, mtime *time.Time) {
+	var updatedAt time.Time
+	if mtime != nil {
+		updatedAt = *mtime
+	} else {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			return
+		}
+		updatedAt = info.ModTime()
 	}
 
 	byteSize := 0
@@ -122,7 +193,7 @@ func (rc *ReadCache) CacheFile(filePath string, lines []string) {
 
 	rc.entries = append(rc.entries, ReadCacheEntry{
 		Lines:     lines,
-		UpdatedAt: info.ModTime(),
+		UpdatedAt: updatedAt,
 		Bytes:     byteSize,
 		FilePath:  filePath,
 	})

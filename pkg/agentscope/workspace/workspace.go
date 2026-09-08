@@ -29,6 +29,32 @@ type Workspace interface {
 	BasePath() string
 }
 
+// ExecPathResolver is an optional Workspace capability. It returns the path
+// form that Execute's shell will resolve for a caller-supplied (normally
+// workspace-relative) path — in other words, the spelling that names the SAME
+// file ReadFile reads.
+//
+// ToolBackend.StatFile has to interpolate a path into a shell command, and the
+// correct form differs per backend:
+//
+//   - Docker runs `docker exec <id> /bin/sh -c` with no -w, so a relative path
+//     resolves against the image WORKDIR while ReadFile resolves against the
+//     container workDir. The absolute form is required. Daytona and
+//     AppleContainer are the same shape.
+//   - K8s (`kubectl exec ... -- cat <path>`), E2B and OpenSandbox pass the
+//     caller's path straight through, and bubblewrap binds its HOST root to "/",
+//     so an absolute BasePath-joined path would name a file that does not exist
+//     inside the sandbox. For those the relative form is required.
+//
+// A workspace that does not implement this gets the caller-relative path, which
+// matches the majority of backends and is the historical behavior. Getting this
+// wrong is not merely wasteful: a stat that lands on a different file supplies a
+// freshness key for the wrong file, and the read cache can then serve stale
+// content as fresh.
+type ExecPathResolver interface {
+	ExecPath(callerPath string) string
+}
+
 // FileInfo describes a file or directory entry.
 type FileInfo struct {
 	Name  string `json:"name"`

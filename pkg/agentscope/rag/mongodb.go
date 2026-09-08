@@ -194,6 +194,7 @@ func (m *MongoDBIndex) Query(ctx context.Context, query string, topK int) ([]Doc
 			ID      string         `json:"_id"`
 			Content string         `json:"content"`
 			Meta    map[string]any `json:"meta"`
+			Score   float64        `json:"score"`
 		} `json:"documents"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
@@ -206,6 +207,8 @@ func (m *MongoDBIndex) Query(ctx context.Context, query string, topK int) ([]Doc
 			ID:      d.ID,
 			Content: d.Content,
 			Meta:    d.Meta,
+			// vectorSearchScore: higher is more relevant (upstream #2486).
+			Score: d.Score,
 		})
 	}
 	return docs, nil

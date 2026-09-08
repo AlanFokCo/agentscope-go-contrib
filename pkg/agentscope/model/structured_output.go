@@ -53,6 +53,30 @@ type soStrategy struct {
 // immediately. When every strategy fails, the returned error wraps
 // errors.ErrStructuredOutput.
 func GenerateStructuredOutput(ctx context.Context, model ChatModel, msgs []*message.Msg, schema json.RawMessage) (json.RawMessage, error) {
+	result, _, err := GenerateStructuredOutputWithUsage(ctx, model, msgs, schema)
+	return result, err
+}
+
+// GenerateStructuredOutputWithUsage is GenerateStructuredOutput plus the
+// token usage accumulated across EVERY strategy attempt (upstream #2433:
+// compression calls burn tokens and must be accounted even when an early
+// strategy is rejected and a later one succeeds).
+func GenerateStructuredOutputWithUsage(ctx context.Context, model ChatModel, msgs []*message.Msg, schema json.RawMessage) (json.RawMessage, *ChatUsage, error) {
+	var totalUsage *ChatUsage
+	addUsage := func(u *ChatUsage) {
+		if u == nil {
+			return
+		}
+		if totalUsage == nil {
+			cp := *u
+			totalUsage = &cp
+			return
+		}
+		totalUsage.InputTokens += u.InputTokens
+		totalUsage.OutputTokens += u.OutputTokens
+		totalUsage.CacheCreationInputTokens += u.CacheCreationInputTokens
+		totalUsage.CacheInputTokens += u.CacheInputTokens
+	}
 	tool := ToolSchema{
 		Type: "function",
 		Function: ToolFunction{
@@ -83,6 +107,9 @@ func GenerateStructuredOutput(ctx context.Context, model ChatModel, msgs []*mess
 		}
 
 		resp, err := model.Chat(ctx, msgs, opts...)
+		if resp != nil {
+			addUsage(resp.Usage)
+		}
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -91,11 +118,11 @@ func GenerateStructuredOutput(ctx context.Context, model ChatModel, msgs []*mess
 				logrus.WithError(err).Warnf("structured output: strategy %q rejected; trying next", st.name)
 				continue
 			}
-			return nil, fmt.Errorf("structured output: model call failed: %w", err)
+			return nil, totalUsage, fmt.Errorf("structured output: model call failed: %w", err)
 		}
 
 		if result, ok := extractStructuredResult(resp); ok {
-			return result, nil
+			return result, totalUsage, nil
 		}
 		extractErr := fmt.Errorf("structured output: strategy %q produced no valid structured result", st.name)
 		if firstErr == nil {
@@ -107,7 +134,7 @@ func GenerateStructuredOutput(ctx context.Context, model ChatModel, msgs []*mess
 	if firstErr == nil {
 		firstErr = fmt.Errorf("structured output: no strategies available")
 	}
-	return nil, fmt.Errorf("%w: %v", errors.ErrStructuredOutput, firstErr)
+	return nil, totalUsage, fmt.Errorf("%w: %v", errors.ErrStructuredOutput, firstErr)
 }
 
 // isStructuredOutputFallbackErr reports whether err indicates the request

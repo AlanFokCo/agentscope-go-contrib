@@ -171,6 +171,15 @@ func (m *MilvusIndex) AddDocuments(ctx context.Context, docs []Document) error {
 }
 
 // Query embeds the query string and searches for the top-K nearest vectors.
+// normalizeScore maps the raw Milvus "distance" onto the project-wide
+// higher-is-more-relevant direction (upstream #2486).
+func (m *MilvusIndex) normalizeScore(distance float64) float64 {
+	if strings.EqualFold(strings.TrimSpace(m.cfg.MetricType), "L2") {
+		return -distance
+	}
+	return distance
+}
+
 func (m *MilvusIndex) Query(ctx context.Context, query string, topK int) ([]Document, error) {
 	if topK <= 0 {
 		topK = 10
@@ -198,9 +207,10 @@ func (m *MilvusIndex) Query(ctx context.Context, query string, topK int) ([]Docu
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Data    []struct {
-			ID      string `json:"id"`
-			Content string `json:"content"`
-			Meta    string `json:"meta"`
+			ID       string  `json:"id"`
+			Content  string  `json:"content"`
+			Meta     string  `json:"meta"`
+			Distance float64 `json:"distance"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &searchResp); err != nil {
@@ -215,6 +225,10 @@ func (m *MilvusIndex) Query(ctx context.Context, query string, topK int) ([]Docu
 		d := Document{
 			ID:      hit.ID,
 			Content: hit.Content,
+			// Upstream #2486: normalize so higher means more relevant.
+			// Milvus L2 reports a distance (lower = closer) and is negated;
+			// IP and COSINE report similarity-like scores already.
+			Score: m.normalizeScore(hit.Distance),
 		}
 		if hit.Meta != "" {
 			var meta map[string]any

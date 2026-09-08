@@ -376,3 +376,33 @@ MW1.OnReply ←
 - [Architecture](architecture.md) — Middleware in the broader system design
 - [Go Runtime Features](go-exclusive.md) — Replay middleware for CI/CD
 - [Tools](tools.md) — Tool-level middleware
+
+### Repetition breaker: error streaks (upstream #1816)
+
+`NewRepetitionBreaker` tracks two independent dimensions per reply:
+
+- **Success spins** (existing): identical successful calls past
+  `WithRepetitionThreshold` inject the strategy-change hint; the next
+  identical call aborts with `ErrToolRepetition`.
+- **Error streaks** (new): the same call *failing* — handler error or
+  error-state tool response — past `WithRepetitionErrorThreshold` (default 3)
+  injects `WithRepetitionErrorHint`; the next identical failure aborts.
+  A success resets the error streak and vice versa.
+
+### Tracing finish reasons (upstream #2450)
+
+The tracing middleware records `gen_ai.response.finish_reasons` on every
+model call with a response, as a JSON array of one string. The three failure
+shapes stay distinguishable:
+
+| Condition                                            | Reason        |
+| ---------------------------------------------------- | ------------- |
+| context canceled                                     | `interrupted` |
+| handler / transport error (`err != nil`)             | `error`       |
+| partial reply reported on `ChatResponse.Error` (#2350) | `incomplete`  |
+| otherwise                                            | the real `StopReason` (`stop`/`length`/`tool_calls`/`content_filter`), or `stop` when unset |
+
+The value is marshaled with `encoding/json`, not concatenated: a provider
+`StopReason` containing a quote or backslash used to produce an invalid JSON
+attribute. Nil responses keep the established contract of no supplementary
+span.

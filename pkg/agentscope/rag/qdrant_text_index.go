@@ -121,6 +121,9 @@ func (i *QdrantTextIndex) Query(ctx context.Context, query string, topK int) ([]
 		doc := Document{
 			ID:   id,
 			Meta: meta,
+			// Qdrant normalizes every metric so a higher score means more
+			// similar (upstream #2486 direction holds as-is).
+			Score: float64(p.GetScore()),
 		}
 
 		// Try to recover original content if present in payload.

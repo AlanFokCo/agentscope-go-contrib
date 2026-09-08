@@ -73,6 +73,34 @@ type ContextConfig struct {
 	SummaryTemplate   string          // Template with {field} placeholders for the structured summary.
 	SummarySchema     json.RawMessage // JSON Schema for structured output (matches SummarySchema fields).
 	ToolResultLimit   int             // Max token estimate for individual tool results (default 50000).
+	MaxImageNum       int             // Max images kept in context; oldest are replaced by text reminders (0 = unlimited, upstream #2362).
+
+	// AgentDrivenTriggerRatio is the token ratio at which the model-invoked
+	// compress_context tool may compress (upstream #2143). It has to be lower
+	// than TriggerRatio: automatic compression already fires at TriggerRatio,
+	// so with the same number the tool could never do anything the agent had
+	// not already done. 0 (the default) means TriggerRatio/2; values above
+	// TriggerRatio are clamped down to it.
+	AgentDrivenTriggerRatio float64
+}
+
+// agentDrivenTriggerRatio resolves the effective threshold for a
+// model-initiated compression. See ContextConfig.AgentDrivenTriggerRatio.
+func agentDrivenTriggerRatio(cfg *ContextConfig) float64 {
+	r := cfg.AgentDrivenTriggerRatio
+	if r <= 0 {
+		r = cfg.TriggerRatio / 2
+	}
+	if r <= 0 {
+		r = 0.4 // TriggerRatio was itself unset; use a sane standalone value
+	}
+	// Clamp below the automatic threshold, but only when that threshold is
+	// actually configured: clamping against an unset (zero) TriggerRatio
+	// would collapse the ratio to 0 and make the tool never fire.
+	if cfg.TriggerRatio > 0 && r > cfg.TriggerRatio {
+		r = cfg.TriggerRatio
+	}
+	return r
 }
 
 func (c *ContextConfig) withDefaults() ContextConfig {
@@ -104,33 +132,84 @@ func (c *ContextConfig) withDefaults() ContextConfig {
 // generates a structured summary of old messages using the model.
 // It runs through the OnCompressContext middleware chain if middlewares are configured.
 func (a *UnifiedAgent) compressContext(ctx context.Context) error {
+	_, err := a.compressContextWithRatio(ctx, 0)
+	return err
+}
+
+// compressContextWithRatio runs the compression chain and reports whether the
+// context was actually summarized. triggerOverride replaces the configured
+// TriggerRatio when > 0; the agent-driven compress_context tool uses it to
+// lower the bar so the model can compress before the automatic threshold.
+//
+// "Actually summarized" is observed from state (a new non-empty Summary, or a
+// changed context length) rather than from the handler's return value, so the
+// middleware CompressHandler API stays untouched.
+func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOverride float64) (bool, error) {
 	if a.contextCfg == nil {
-		return nil
+		return false, nil
 	}
 
+	a.mu.Lock()
+	prevSummary := a.state.Summary
+	prevLen := len(a.state.Context)
+	a.mu.Unlock()
+
+	base := *a.contextCfg
+	if triggerOverride > 0 {
+		base.TriggerRatio = triggerOverride
+	}
+
+	var err error
 	if len(a.middlewares) == 0 {
-		cfgCopy := *a.contextCfg
-		return a.compressContextImpl(ctx, &cfgCopy)
+		cfgCopy := base
+		err = a.compressContextImpl(ctx, &cfgCopy)
+	} else {
+		core := func(ctx context.Context, input middleware.CompressInput) error {
+			cfg := base
+			cfg.TriggerRatio = input.TriggerRatio
+			cfg.ReserveRatio = input.ReserveRatio
+			return a.compressContextImpl(ctx, &cfg)
+		}
+		chain := middleware.BuildCompressChain(a.middlewares, core)
+		err = chain(ctx, middleware.CompressInput{
+			AgentName:    a.name,
+			TriggerRatio: base.TriggerRatio,
+			ReserveRatio: base.ReserveRatio,
+		})
 	}
 
-	core := func(ctx context.Context, input middleware.CompressInput) error {
-		cfg := *a.contextCfg
-		cfg.TriggerRatio = input.TriggerRatio
-		cfg.ReserveRatio = input.ReserveRatio
-		return a.compressContextImpl(ctx, &cfg)
+	a.mu.Lock()
+	compressed := (a.state.Summary != prevSummary && a.state.Summary != "") ||
+		len(a.state.Context) != prevLen
+	a.mu.Unlock()
+	return compressed, err
+}
+
+// compressContextForTool is the seam behind the compress_context tool
+// (upstream #2143). It compresses at the lower agent-driven threshold and
+// reports honestly whether anything happened, so the tool never tells the model
+// that details were summarized away when the context is unchanged.
+func (a *UnifiedAgent) compressContextForTool(ctx context.Context) (tool.CompressionResult, error) {
+	if a.contextCfg == nil {
+		return tool.CompressionResult{Detail: "Context compression is not configured for this agent."}, nil
 	}
-	chain := middleware.BuildCompressChain(a.middlewares, core)
-	return chain(ctx, middleware.CompressInput{
-		AgentName:    a.name,
-		TriggerRatio: a.contextCfg.TriggerRatio,
-		ReserveRatio: a.contextCfg.ReserveRatio,
-	})
+	compressed, err := a.compressContextWithRatio(ctx, agentDrivenTriggerRatio(a.contextCfg))
+	if err != nil {
+		return tool.CompressionResult{}, err
+	}
+	return tool.CompressionResult{Compressed: compressed}, nil
 }
 
 func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConfig) error {
 	ctxSize := cfg.ContextSize
 	if ctxSize == 0 {
 		ctxSize = model.ResolveContextSize(a.model, defaultContextSize)
+	}
+
+	// Upstream #2362: limit the images carried in context first, so the
+	// token estimate below reflects the images that actually remain.
+	if cfg.MaxImageNum > 0 {
+		a.limitContextImages(cfg.MaxImageNum)
 	}
 
 	modelMsgs := a.prepareModelInput(ctx)
@@ -187,11 +266,16 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	compTokens := a.model.CountTokens(compressionMsgs, compressionToolSchema)
 	contextOverflow := compTokens > ctxSize
 
-	result, err := model.GenerateStructuredOutput(ctx, a.model, compressionMsgs, cfg.SummarySchema)
+	// Upstream #2433: compression calls burn tokens; accumulate their usage
+	// so the reply loop can account it (budgets, cost tracking, reply msg).
+	result, compUsage, err := model.GenerateStructuredOutputWithUsage(ctx, a.model, compressionMsgs, cfg.SummarySchema)
+	a.recordCompressionUsage(compUsage)
 	if err != nil {
 		if contextOverflow {
 			logrus.WithField("agent", a.name).Warn("compression context overflow, removing oldest messages and retrying")
-			result, err = a.retryCompressWithFewer(ctx, compressionMsgs, msgsToCompress, cfg, ctxSize, compressionToolSchema)
+			var retryUsage *model.ChatUsage
+			result, retryUsage, err = a.retryCompressWithFewer(ctx, compressionMsgs, msgsToCompress, cfg, ctxSize, compressionToolSchema)
+			a.recordCompressionUsage(retryUsage)
 		}
 		if err != nil {
 			// Upstream #2140: a failed summary must not leave the context
@@ -294,7 +378,7 @@ func (a *UnifiedAgent) retryCompressWithFewer(
 	cfg *ContextConfig,
 	ctxSize int,
 	compressionToolSchema []model.ToolSchema,
-) (json.RawMessage, error) {
+) (json.RawMessage, *model.ChatUsage, error) {
 	a.mu.Lock()
 	systemPrompt := a.systemPrompt
 	if len(a.middlewares) > 0 {
@@ -309,10 +393,10 @@ func (a *UnifiedAgent) retryCompressWithFewer(
 		msgs := buildCompressionMessages(systemPrompt, summary, msgsToCompress[i:], cfg.CompressionPrompt)
 		tokens := a.model.CountTokens(msgs, compressionToolSchema)
 		if tokens < triggerThreshold {
-			return model.GenerateStructuredOutput(ctx, a.model, msgs, cfg.SummarySchema)
+			return model.GenerateStructuredOutputWithUsage(ctx, a.model, msgs, cfg.SummarySchema)
 		}
 	}
-	return nil, fmt.Errorf("cannot reduce context below threshold")
+	return nil, nil, fmt.Errorf("cannot reduce context below threshold")
 }
 
 // splitContextForCompression splits state.Context into messages to compress and messages to reserve.
@@ -332,6 +416,11 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 	}
 
 	if reserveTokenBudget <= 0 {
+		// Emergency path (reserve budget disabled, or the retry after a
+		// split that produced nothing): everything is compressed, including
+		// any call still in flight. At this point the context is already
+		// over the window, so losing an in-flight pair beats an unusable
+		// agent.
 		return copyMsgs(ctxMsgs), nil
 	}
 
@@ -355,6 +444,11 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 	} else {
 		splitIdx = adjustSplitForToolPairs(ctxMsgs, splitIdx)
 	}
+	// Applied last, and it iterates: adjustSplitForToolPairs only pushes the
+	// split FORWARD, which can swallow a call that is still in flight and can
+	// also leave a result in the reserved half whose call sits in the
+	// compressed half. Pulling the split back repairs both.
+	splitIdx = pullSplitBackForToolPairs(ctxMsgs, splitIdx)
 
 	return copyMsgs(ctxMsgs[:splitIdx]), copyMsgs(ctxMsgs[splitIdx:])
 }
@@ -363,6 +457,10 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 // corresponding tool call messages. It pushes the split point forward if needed
 // so that orphan tool results (whose tool call is in the compressed portion)
 // move into the compressed portion as well.
+//
+// This is the forward half of the repair; pullSplitBackForToolPairs runs after
+// it and has the last word, because pushing forward can strand an in-flight
+// call. See that function for why backward dominates.
 func adjustSplitForToolPairs(msgs []*message.Msg, splitIdx int) int {
 	callIDs := make(map[string]bool)
 	resultPositions := make(map[string]int)
@@ -391,6 +489,77 @@ func adjustSplitForToolPairs(msgs []*message.Msg, splitIdx int) int {
 		return splitIdx
 	}
 	return maxOrphanIdx + 1
+}
+
+// pullSplitBackForToolPairs moves the split point BACKWARD until two invariants
+// hold, iterating to a fixpoint (each pass only lowers the index, so it
+// terminates in at most len(msgs) passes):
+//
+//  1. No tool call that is still waiting for its result may sit in the
+//     compressed half. This matters when the model calls compress_context from
+//     inside the acting loop: the assistant message holding the batch's calls
+//     is already in the context, and summarizing it away leaves the results
+//     that land moments later orphaned (upstream #2143 tracks these as
+//     unfinished_tool_call_ids).
+//  2. No call may end up on the opposite side from its own result. Providers
+//     reject a tool result whose call is not in the request.
+//
+// Backward is the only safe direction here. adjustSplitForToolPairs repairs a
+// split pair by pushing the split forward so the RESULT joins its call in the
+// compressed half; that is right when the call has already left the context
+// entirely, but when the call is still present it can drag an in-flight call
+// into the summary and can expose further split pairs one index later. Pulling
+// the CALL into the reserved half fixes the same pair without either side
+// effect, so it dominates. The two are composed forward-then-backward, and the
+// backward pass has the last word.
+func pullSplitBackForToolPairs(msgs []*message.Msg, splitIdx int) int {
+	if splitIdx <= 0 || splitIdx > len(msgs) {
+		return splitIdx
+	}
+
+	callIdx := make(map[string]int)
+	resultIdx := make(map[string]int)
+	for i, m := range msgs {
+		if m == nil {
+			continue
+		}
+		for _, b := range m.Content {
+			switch blk := b.(type) {
+			case message.ToolCallBlock:
+				if _, seen := callIdx[blk.ID]; !seen {
+					callIdx[blk.ID] = i
+				}
+			case message.ToolResultBlock:
+				if _, seen := resultIdx[blk.ID]; !seen {
+					resultIdx[blk.ID] = i
+				}
+			}
+		}
+	}
+
+	for {
+		limit := splitIdx
+		for id, c := range callIdx {
+			if c >= limit {
+				continue // already reserved
+			}
+			r, hasResult := resultIdx[id]
+			if !hasResult {
+				// In flight: must not be summarized away.
+				limit = c
+				continue
+			}
+			if r >= limit {
+				// Split pair: pull the call into the reserved half so both
+				// sides of the exchange travel together.
+				limit = c
+			}
+		}
+		if limit == splitIdx {
+			return splitIdx
+		}
+		splitIdx = limit
+	}
 }
 
 // TruncateToolResult truncates a tool result string if it exceeds the token limit.
@@ -569,4 +738,193 @@ func cleanReadCacheForReserved(rc *tool.ReadCache, reservedMsgs []*message.Msg) 
 	}
 
 	rc.CleanFileCache(keepPaths)
+}
+
+// limitContextImages caps the number of image data blocks carried in the
+// agent context (upstream #2362). The oldest images beyond the cap are
+// replaced by a system-reminder text block; a URL-backed image keeps a
+// pointer to its URL so the model can refer back to it. Images nested in
+// tool results or hint blocks become TextBlocks (those containers only
+// accept text/data blocks); top-level images in non-user messages become
+// HintBlocks, matching Python's replacement rules.
+func (a *UnifiedAgent) limitContextImages(maxImages int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	type imageRef struct {
+		msgIdx    int
+		blockIdx  int
+		nested    int // 0 = top-level, 1 = tool-result output list, 2 = hint list
+		nestedIdx int
+		block     message.DataBlock
+	}
+	isImage := func(b message.ContentBlock) (message.DataBlock, bool) {
+		db, ok := b.(message.DataBlock)
+		if !ok {
+			return db, false
+		}
+		return db, strings.HasPrefix(db.GetMediaType(), "image/")
+	}
+
+	var images []imageRef
+	for mi, msg := range a.state.Context {
+		if msg == nil {
+			continue
+		}
+		for bi, blk := range msg.Content {
+			if db, ok := isImage(blk); ok {
+				images = append(images, imageRef{msgIdx: mi, blockIdx: bi, block: db})
+				continue
+			}
+			switch nb := blk.(type) {
+			case message.ToolResultBlock:
+				if list, ok := nb.Output.([]message.ContentBlock); ok {
+					for j, sub := range list {
+						if db, ok := isImage(sub); ok {
+							images = append(images, imageRef{msgIdx: mi, blockIdx: bi, nested: 1, nestedIdx: j, block: db})
+						}
+					}
+				}
+			case message.HintBlock:
+				if list, ok := nb.Hint.([]message.ContentBlock); ok {
+					for j, sub := range list {
+						if db, ok := isImage(sub); ok {
+							images = append(images, imageRef{msgIdx: mi, blockIdx: bi, nested: 2, nestedIdx: j, block: db})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	nExceed := len(images) - maxImages
+	if nExceed <= 0 {
+		return
+	}
+	logrus.WithFields(logrus.Fields{
+		"agent":  a.name,
+		"images": len(images),
+		"limit":  maxImages,
+	}).Infof("context image count exceeds limit, removing the oldest %d image(s)", nExceed)
+
+	// Copy-on-write. a.state.Context shares its *Msg pointers with snapshots
+	// handed out earlier under a.mu and then read after unlocking
+	// (prepareModelInput, splitContextForCompression, checkpoint saves, HTTP
+	// history reads). Writing msg.Content[i] in place races with those
+	// readers, so each touched message is cloned first and the clone is
+	// published back into the context; readers keep seeing the old, now
+	// immutable value. The same applies one level down: a cloned message's
+	// ToolResultBlock.Output / HintBlock.Hint still share their backing
+	// array, so those lists are cloned too.
+	clonedMsgs := make(map[int]*message.Msg)
+	clonedLists := make(map[[2]int][]message.ContentBlock)
+	cloneMsg := func(mi int) *message.Msg {
+		if c, ok := clonedMsgs[mi]; ok {
+			return c
+		}
+		orig := a.state.Context[mi]
+		cp := *orig
+		cp.Content = make([]message.ContentBlock, len(orig.Content))
+		copy(cp.Content, orig.Content)
+		clonedMsgs[mi] = &cp
+		return &cp
+	}
+	cloneList := func(mi, bi int, list []message.ContentBlock) []message.ContentBlock {
+		key := [2]int{mi, bi}
+		if c, ok := clonedLists[key]; ok {
+			return c
+		}
+		cp := make([]message.ContentBlock, len(list))
+		copy(cp, list)
+		clonedLists[key] = cp
+		return cp
+	}
+
+	for _, ref := range images[:nExceed] {
+		msg := cloneMsg(ref.msgIdx)
+		url := ""
+		if src, ok := ref.block.Source.(message.URLSource); ok {
+			url = src.URL
+		}
+		name := ""
+		if ref.block.Name != "" {
+			name = "named '" + ref.block.Name + "' "
+		}
+		var text string
+		if url != "" {
+			text = "<system-reminder>The image " + name + "is offloaded into " + url + ", you can refer to it when needed.</system-reminder>"
+		} else {
+			text = "<system-reminder>The image " + name + "is removed to free up context space.</system-reminder>"
+		}
+		switch ref.nested {
+		case 0:
+			if msg.Role != message.RoleUser {
+				msg.Content[ref.blockIdx] = message.HintBlock{Type: "hint", Hint: text}
+			} else {
+				msg.Content[ref.blockIdx] = message.TextBlock{Type: "text", Text: text}
+			}
+		case 1:
+			tb, ok := msg.Content[ref.blockIdx].(message.ToolResultBlock)
+			if !ok {
+				continue
+			}
+			list, ok := tb.Output.([]message.ContentBlock)
+			if !ok || ref.nestedIdx >= len(list) {
+				continue
+			}
+			list = cloneList(ref.msgIdx, ref.blockIdx, list)
+			list[ref.nestedIdx] = message.TextBlock{Type: "text", Text: text}
+			tb.Output = list
+			msg.Content[ref.blockIdx] = tb
+		case 2:
+			hb, ok := msg.Content[ref.blockIdx].(message.HintBlock)
+			if !ok {
+				continue
+			}
+			list, ok := hb.Hint.([]message.ContentBlock)
+			if !ok || ref.nestedIdx >= len(list) {
+				continue
+			}
+			list = cloneList(ref.msgIdx, ref.blockIdx, list)
+			list[ref.nestedIdx] = message.TextBlock{Type: "text", Text: text}
+			hb.Hint = list
+			msg.Content[ref.blockIdx] = hb
+		}
+	}
+
+	// Publish the clones. Doing this after the loop (rather than per
+	// reference) keeps a.state.Context consistent for the whole scan.
+	for mi, cp := range clonedMsgs {
+		a.state.Context[mi] = cp
+	}
+}
+
+// recordCompressionUsage accumulates token usage burned by compression model
+// calls (upstream #2433). The reply loop drains it via takeCompressionUsage
+// and surfaces it as a model-call-end event.
+func (a *UnifiedAgent) recordCompressionUsage(u *model.ChatUsage) {
+	if u == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pendingCompressionUsage == nil {
+		cp := *u
+		a.pendingCompressionUsage = &cp
+		return
+	}
+	p := a.pendingCompressionUsage
+	p.InputTokens += u.InputTokens
+	p.OutputTokens += u.OutputTokens
+	p.CacheCreationInputTokens += u.CacheCreationInputTokens
+	p.CacheInputTokens += u.CacheInputTokens
+}
+
+// takeCompressionUsage returns and clears the accumulated compression usage.
+func (a *UnifiedAgent) takeCompressionUsage() *model.ChatUsage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u := a.pendingCompressionUsage
+	a.pendingCompressionUsage = nil
+	return u
 }

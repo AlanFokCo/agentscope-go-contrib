@@ -294,6 +294,12 @@ func (tk *Toolkit) CallTool(ctx context.Context, name string, input map[string]a
 func (tk *Toolkit) callResolvedTool(ctx context.Context, name string, input map[string]any, t Tool) (*ToolResponse, error) {
 	// Validate input against schema before execution
 	if schema := t.InputSchema(); len(schema) > 0 {
+		// Upstream #2496: coerce mistyped arguments toward the schema on
+		// EVERY call before validation — models routinely quote numbers or
+		// stringify booleans in otherwise-valid JSON, and a repairable
+		// call should not fail validation. CoerceToSchema is copy-on-write,
+		// so the caller's map is never rewritten behind their back.
+		input = jsonx.CoerceToSchema(input, schema)
 		if err := ValidateInput(schema, input); err != nil {
 			return NewErrorResponse(fmt.Errorf("input validation: %w", err)), nil
 		}
@@ -337,9 +343,14 @@ func (tk *Toolkit) callResolvedTool(ctx context.Context, name string, input map[
 func (tk *Toolkit) CallToolFromBlock(ctx context.Context, block *message.ToolCallBlock) (*ToolResponse, error) {
 	input, err := block.ParseInput()
 	if err != nil {
-		// Try JSON repair before giving up
+		// Schema-guided repair before giving up (upstream #2496): syntax
+		// repair plus type coercion toward the tool's declared input schema.
 		var repaired map[string]any
-		if repairErr := jsonx.RepairAndUnmarshal([]byte(block.Input), &repaired); repairErr == nil {
+		var schema json.RawMessage
+		if t := tk.Get(block.Name); t != nil {
+			schema = t.InputSchema()
+		}
+		if repairErr := jsonx.RepairWithSchema([]byte(block.Input), schema, &repaired); repairErr == nil {
 			input = repaired
 		} else {
 			return NewErrorResponse(&agenterrors.ToolJSONDecodeError{

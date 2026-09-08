@@ -99,9 +99,17 @@ func (o *Orchestrator) Execute(ctx context.Context, call message.ToolCallBlock) 
 		return NewErrorResponse(fmt.Errorf("parse input: %w", err)), nil
 	}
 
-	// 3. Permission check
+	// 3. Permission check. When a workspace backend will execute the call,
+	// shell-specific checks follow the backend (POSIX containers) instead of
+	// the host OS.
 	if o.permEngine != nil {
-		decision, permErr := o.permEngine.CheckPermission(t, input)
+		var decision permission.Decision
+		var permErr error
+		if pctx := BackendPermissionContext(ctx, o.permEngine.Context); pctx != nil {
+			decision, permErr = o.permEngine.CheckPermissionInContext(t, input, pctx)
+		} else {
+			decision, permErr = o.permEngine.CheckPermission(t, input)
+		}
 		if permErr != nil {
 			return nil, fmt.Errorf("permission check: %w", permErr)
 		}

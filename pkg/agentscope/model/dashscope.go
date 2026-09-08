@@ -240,6 +240,15 @@ func assembleStreamContent(thinking, text string, accToolCalls map[int]*openAITo
 }
 
 func processOpenAIStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, outCh chan<- ChatResponse) {
+	processOpenAIStreamCfg(ctx, sseCh, outCh, false)
+}
+
+// processOpenAIStreamCfg is processOpenAIStream with an xAI-specific usage
+// option. includeReasoningInOutput adds usage.completion_tokens_details.
+// reasoning_tokens into OutputTokens (upstream #2461). Only xAI needs this:
+// its completion_tokens EXCLUDE reasoning tokens, while OpenAI/DashScope/
+// Moonshot/DeepSeek already include them — adding it there would double-bill.
+func processOpenAIStreamCfg(ctx context.Context, sseCh <-chan httpx.SSEEvent, outCh chan<- ChatResponse, includeReasoningInOutput bool) {
 	defer close(outCh)
 
 	var (
@@ -298,9 +307,13 @@ func processOpenAIStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, outCh
 		}
 
 		if chunk.Usage != nil {
+			outTokens := chunk.Usage.CompletionTokens
+			if includeReasoningInOutput && chunk.Usage.CompletionTokensDetails != nil {
+				outTokens += chunk.Usage.CompletionTokensDetails.ReasoningTokens
+			}
 			usage = &ChatUsage{
 				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
+				OutputTokens: outTokens,
 			}
 		}
 
@@ -532,6 +545,9 @@ type openAIChatResponse struct {
 		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens,omitempty"`
 		} `json:"prompt_tokens_details,omitempty"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
@@ -553,6 +569,9 @@ type openAIStreamChunk struct {
 		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens,omitempty"`
 		} `json:"prompt_tokens_details,omitempty"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
@@ -592,6 +611,12 @@ func formatToolChoice(tc *ToolChoice) any {
 
 // parseOpenAIResponse converts an OpenAI-compatible response to our ChatResponse.
 func parseOpenAIResponse(parsed *openAIChatResponse, msgs []*message.Msg) (*ChatResponse, error) {
+	return parseOpenAIResponseCfg(parsed, msgs, false)
+}
+
+// parseOpenAIResponseCfg is parseOpenAIResponse with the xAI-specific
+// includeReasoningInOutput usage option (see processOpenAIStreamCfg).
+func parseOpenAIResponseCfg(parsed *openAIChatResponse, msgs []*message.Msg, includeReasoningInOutput bool) (*ChatResponse, error) {
 	if len(parsed.Choices) == 0 {
 		return nil, fmt.Errorf("empty choices in response")
 	}
@@ -673,9 +698,13 @@ func parseOpenAIResponse(parsed *openAIChatResponse, msgs []*message.Msg) (*Chat
 
 	var usage *ChatUsage
 	if parsed.Usage != nil {
+		outTokens := parsed.Usage.CompletionTokens
+		if includeReasoningInOutput && parsed.Usage.CompletionTokensDetails != nil {
+			outTokens += parsed.Usage.CompletionTokensDetails.ReasoningTokens
+		}
 		usage = &ChatUsage{
 			InputTokens:  parsed.Usage.PromptTokens,
-			OutputTokens: parsed.Usage.CompletionTokens,
+			OutputTokens: outTokens,
 		}
 		if parsed.Usage.PromptTokensDetails != nil {
 			usage.CacheInputTokens = parsed.Usage.PromptTokensDetails.CachedTokens

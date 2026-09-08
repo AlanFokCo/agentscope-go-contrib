@@ -471,6 +471,10 @@ func processAnthropicStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, ou
 		cacheInputTokens         int
 		accBlocks                []anthropicAccBlock
 		currentBlockIdx          int
+		sawMessageStop           bool
+		// streamErr carries an Anthropic "error" SSE event, which arrives
+		// inside an otherwise successful HTTP 200 stream.
+		streamErr error
 	)
 
 	for evt := range sseCh {
@@ -599,9 +603,24 @@ func processAnthropicStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, ou
 
 		case "message_stop":
 			// Stream complete
+			sawMessageStop = true
 
 		case "error":
-			// Anthropic error event — skip gracefully
+			// Anthropic reports mid-stream failures (overloaded_error, rate
+			// limits, an aborted generation) as an EVENT, not as an HTTP
+			// status: the response is already 200 and open. Skipping it left
+			// the only visible symptom as the misleading "stream ended
+			// without message_stop (truncated)".
+			var ae anthropicStreamError
+			if json.Unmarshal([]byte(evt.Data), &ae) == nil && ae.Error.Type != "" {
+				streamErr = fmt.Errorf("anthropic: stream error %s: %s", ae.Error.Type, ae.Error.Message)
+			} else {
+				data := evt.Data
+				if len(data) > 512 {
+					data = data[:512] + "..."
+				}
+				streamErr = fmt.Errorf("anthropic: unparseable stream error event: %s", data)
+			}
 		}
 	}
 
@@ -654,10 +673,31 @@ func processAnthropicStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, ou
 		Usage:     usage,
 		ModelName: modelName,
 	}
+	// Upstream #2350 class: never end silently. A stream that terminates
+	// without message_stop is truncated (proxy reset, upstream abort); the
+	// final response still carries whatever accumulated, plus an Error so
+	// consumers can distinguish completion from truncation. ctx cancellation
+	// is an abandoned-consumer path, not a truncation.
+	switch {
+	case streamErr != nil && !sawMessageStop && ctx.Err() == nil:
+		finalResp.Error = fmt.Errorf("%w (stream also ended without message_stop)", streamErr)
+	case streamErr != nil:
+		finalResp.Error = streamErr
+	case !sawMessageStop && ctx.Err() == nil:
+		finalResp.Error = fmt.Errorf("anthropic: stream ended without message_stop (truncated)")
+	}
 	select {
 	case outCh <- finalResp:
 	case <-ctx.Done():
 	}
+}
+
+// anthropicStreamError is the payload of a mid-stream "error" SSE event.
+type anthropicStreamError struct {
+	Error struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 type anthropicAccBlock struct {

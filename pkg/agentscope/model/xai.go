@@ -108,7 +108,8 @@ func (m *XAIChatModel) Chat(ctx context.Context, msgs []*message.Msg, opts ...Ca
 		return nil, fmt.Errorf("xai: %w", err)
 	}
 
-	return parseOpenAIResponse(&parsed, msgs)
+	// Upstream #2461: xAI completion_tokens exclude reasoning tokens.
+	return parseOpenAIResponseCfg(&parsed, msgs, true)
 }
 
 // ChatStream implements streaming chat via SSE.
@@ -165,7 +166,7 @@ func (m *XAIChatModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts
 	}
 
 	outCh := make(chan ChatResponse, 16)
-	go processOpenAIStream(ctx, sseCh, outCh)
+	go processOpenAIStreamCfg(ctx, sseCh, outCh, true)
 	return outCh, nil
 }
 

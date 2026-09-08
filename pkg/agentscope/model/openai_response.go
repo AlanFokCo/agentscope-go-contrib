@@ -128,10 +128,7 @@ func (m *openaiResponseModel) buildRequestBody(msgs []*message.Msg, opts *CallOp
 			}
 			continue
 		}
-		item := m.formatInputItem(msg)
-		if item != nil {
-			input = append(input, item)
-		}
+		input = append(input, m.formatInputItems(msg)...)
 	}
 	body["input"] = input
 
@@ -167,52 +164,197 @@ func (m *openaiResponseModel) buildRequestBody(msgs []*message.Msg, opts *CallOp
 	return body
 }
 
-func (m *openaiResponseModel) formatInputItem(msg *message.Msg) map[string]any {
+// formatInputItems converts one Msg into zero or more Responses API input
+// items. Unlike a one-item-per-message mapping, this preserves multi-block
+// turns faithfully (upstream #2426 and the #2389 family):
+//   - a ThinkingBlock carrying Extra["responses_item"] replays the original
+//     reasoning item (including encrypted_content) so stateless reasoning
+//     continues across turns;
+//   - every ToolCallBlock becomes its own function_call item (previously
+//     only the first survived);
+//   - every ToolResultBlock becomes its own function_call_output item;
+//   - accumulated text is flushed as a message item before the tool calls
+//     that follow it, matching the API's segment ordering.
+func (m *openaiResponseModel) formatInputItems(msg *message.Msg) []map[string]any {
 	role := string(msg.Role)
-	if role == "assistant" {
-		role = "assistant"
-	}
 
 	blocks := msg.GetContentBlocks()
 	if len(blocks) == 0 {
-		return map[string]any{"role": role, "content": ""}
+		return []map[string]any{{"role": role, "content": ""}}
 	}
 
-	// Check for tool results
-	for _, b := range blocks {
-		if tr, ok := b.(message.ToolResultBlock); ok {
-			return map[string]any{
-				"type":    "function_call_output",
-				"call_id": tr.ID,
-				"output":  tr.GetOutputText(),
-			}
-		}
-	}
-
+	var items []map[string]any
 	var content []map[string]any
+
+	flushContent := func() {
+		if len(content) == 0 {
+			return
+		}
+		if len(content) == 1 {
+			if text, ok := content[0]["text"].(string); ok && content[0]["type"] == "input_text" {
+				items = append(items, map[string]any{"role": role, "content": text})
+			} else {
+				items = append(items, map[string]any{"role": role, "content": content})
+			}
+		} else {
+			items = append(items, map[string]any{"role": role, "content": content})
+		}
+		content = nil
+	}
+
 	for _, b := range blocks {
 		switch blk := b.(type) {
+		case message.ThinkingBlock:
+			raw, ok := blk.Extra["responses_item"].(map[string]any)
+			if !ok || len(raw) == 0 {
+				// A plain thinking block cannot be replayed, and an empty
+				// map would serialize to "{}" and get the whole request
+				// rejected by the API.
+				continue
+			}
+			flushContent() // reasoning starts a new output segment
+			items = append(items, stripJSONNullsMap(raw))
 		case message.TextBlock:
 			content = append(content, map[string]any{
 				"type": "input_text",
 				"text": blk.Text,
 			})
 		case message.ToolCallBlock:
-			// Tool calls from assistant are represented as function_call items
-			return map[string]any{
+			flushContent()
+			items = append(items, map[string]any{
 				"type":      "function_call",
 				"id":        blk.ID,
 				"call_id":   blk.ID,
 				"name":      blk.Name,
 				"arguments": blk.Input,
-			}
+			})
+		case message.ToolResultBlock:
+			flushContent()
+			items = append(items, map[string]any{
+				"type":    "function_call_output",
+				"call_id": blk.ID,
+				"output":  formatToolResultOutput(&blk),
+			})
 		}
 	}
-
-	if len(content) == 1 {
-		return map[string]any{"role": role, "content": content[0]["text"]}
+	flushContent()
+	if len(items) == 0 {
+		// Every block was of a type the Responses API cannot carry here
+		// (audio, a bare image on a role that has no content parts, ...).
+		// Emitting nothing would silently drop the turn from the
+		// conversation; the old one-item-per-message mapping produced
+		// {"role":...,"content":null} and the API rejected it loudly. Keep
+		// the turn visible with an explicit note instead of losing it.
+		return []map[string]any{{
+			"role":    role,
+			"content": "[content omitted: this turn carried only block types the Responses API cannot replay]",
+		}}
 	}
-	return map[string]any{"role": role, "content": content}
+	return items
+}
+
+// reasoningItemSummaryText extracts the concatenated summary_text of a raw
+// Responses API reasoning item.
+func reasoningItemSummaryText(item map[string]any) string {
+	summary, ok := item["summary"].([]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	for _, part := range summary {
+		pm, ok := part.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, ok := pm["text"].(string); ok {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(text)
+		}
+	}
+	return sb.String()
+}
+
+// buildStreamContent assembles the final content blocks of a streamed
+// Responses reply.
+//
+// Order matters and must match parseResponse (the non-streaming path), which
+// walks the response's output array in order: reasoning items, then text, then
+// tool calls. formatInputItems replays history in the order the blocks appear,
+// so emitting text first would replay as message(text) -> reasoning: a
+// reasoning item with nothing after it. That is exactly the shape upstream
+// #2426 exists to prevent, and it broke encrypted-reasoning replay because the
+// agent's default path is streaming.
+//
+// toolCallOrder keys toolCalls so multiple calls in one reply keep the order
+// the API produced them in; ranging the map directly is non-deterministic.
+func buildStreamContent(
+	accText string,
+	accThinking string,
+	reasoningItems []map[string]any,
+	toolCalls map[string]*message.ToolCallBlock,
+	toolCallOrder []string,
+) []message.ContentBlock {
+	var content []message.ContentBlock
+
+	if len(reasoningItems) > 0 {
+		for _, item := range reasoningItems {
+			tb := message.ThinkingBlock{
+				Type:     "thinking",
+				Thinking: reasoningItemSummaryText(item),
+				Extra:    map[string]any{"responses_item": item},
+			}
+			if id, ok := item["id"].(string); ok {
+				tb.ID = id
+			}
+			content = append(content, tb)
+		}
+	} else if accThinking != "" {
+		content = append(content, message.ThinkingBlock{Type: "thinking", Thinking: accThinking})
+	}
+
+	if accText != "" {
+		content = append(content, message.TextBlock{Type: "text", Text: accText})
+	}
+
+	for _, id := range toolCallOrder {
+		if tc, ok := toolCalls[id]; ok {
+			content = append(content, *tc)
+		}
+	}
+	return content
+}
+
+// stripJSONNullsMap is stripJSONNulls for a known map root.
+func stripJSONNullsMap(m map[string]any) map[string]any {
+	out, _ := stripJSONNulls(m).(map[string]any)
+	return out
+}
+
+// stripJSONNulls recursively removes nil-valued map entries so replayed
+// items do not carry explicit nulls (upstream #2426: exclude_none — some
+// Responses-compatible APIs reject null fields on input items).
+func stripJSONNulls(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if val == nil {
+				continue
+			}
+			out[k] = stripJSONNulls(val)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(t))
+		for _, item := range t {
+			out = append(out, stripJSONNulls(item))
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func (m *openaiResponseModel) doRequest(ctx context.Context, body map[string]any) (io.ReadCloser, error) {
@@ -274,17 +416,19 @@ func (m *openaiResponseModel) parseResponse(raw map[string]any) (*ChatResponse, 
 					}
 				}
 			case "reasoning":
-				if summary, ok := obj["summary"].([]any); ok {
-					for _, s := range summary {
-						sm, ok := s.(map[string]any)
-						if !ok {
-							continue
-						}
-						if text, ok := sm["text"].(string); ok {
-							resp.Content = append(resp.Content, message.ThinkingBlock{Type: "thinking", Thinking: text})
-						}
-					}
+				// Upstream #2426: preserve the whole reasoning item (including
+				// encrypted_content) so multi-turn history replay can hand it
+				// back to the Responses API; summary text becomes the visible
+				// thinking content.
+				tb := message.ThinkingBlock{
+					Type:     "thinking",
+					Thinking: reasoningItemSummaryText(obj),
+					Extra:    map[string]any{"responses_item": stripJSONNullsMap(obj)},
 				}
+				if id, ok := obj["id"].(string); ok {
+					tb.ID = id
+				}
+				resp.Content = append(resp.Content, tb)
 			case "function_call":
 				name, _ := obj["name"].(string)
 				args, _ := obj["arguments"].(string)
@@ -337,7 +481,11 @@ func (m *openaiResponseModel) processStream(ctx context.Context, body io.ReadClo
 	var accText string
 	var accThinking string
 	var completedFinal bool
+	var reasoningItems []map[string]any
 	toolCalls := make(map[string]*message.ToolCallBlock)
+	// Insertion order of toolCalls: ranging a map is random, and a reply with
+	// two tool calls must replay them in the order the model produced them.
+	var toolCallOrder []string
 
 scanLoop:
 	for scanner.Scan() {
@@ -381,11 +529,23 @@ scanLoop:
 				return
 			}
 
+		case "response.output_item.done":
+			// Upstream #2426: a completed reasoning item carries the
+			// encrypted_content needed to replay reasoning across turns.
+			if item, ok := event["item"].(map[string]any); ok {
+				if itemType, _ := item["type"].(string); itemType == "reasoning" {
+					reasoningItems = append(reasoningItems, stripJSONNullsMap(item))
+				}
+			}
+
 		case "response.output_item.added":
 			if item, ok := event["item"].(map[string]any); ok {
 				if itemType, _ := item["type"].(string); itemType == "function_call" {
 					id, _ := item["id"].(string)
 					name, _ := item["name"].(string)
+					if _, seen := toolCalls[id]; !seen {
+						toolCallOrder = append(toolCallOrder, id)
+					}
 					toolCalls[id] = &message.ToolCallBlock{
 						Type: "tool_call", ID: id, Name: name,
 					}
@@ -401,15 +561,7 @@ scanLoop:
 
 		case "response.completed":
 			resp := &ChatResponse{IsLast: true, ModelName: m.cfg.Model}
-			if accText != "" {
-				resp.Content = append(resp.Content, message.TextBlock{Type: "text", Text: accText})
-			}
-			if accThinking != "" {
-				resp.Content = append(resp.Content, message.ThinkingBlock{Type: "thinking", Thinking: accThinking})
-			}
-			for _, tc := range toolCalls {
-				resp.Content = append(resp.Content, *tc)
-			}
+			resp.Content = buildStreamContent(accText, accThinking, reasoningItems, toolCalls, toolCallOrder)
 
 			if respObj, ok := event["response"].(map[string]any); ok {
 				if id, ok := respObj["id"].(string); ok {
@@ -442,18 +594,63 @@ scanLoop:
 	// terminates without response.completed still delivers a final IsLast
 	// response so consumers can distinguish completion from truncation.
 	final := ChatResponse{IsLast: true, ModelName: m.cfg.Model}
-	if accText != "" {
-		final.Content = append(final.Content, message.TextBlock{Type: "text", Text: accText})
-	}
-	if accThinking != "" {
-		final.Content = append(final.Content, message.ThinkingBlock{Type: "thinking", Thinking: accThinking})
-	}
-	for _, tc := range toolCalls {
-		final.Content = append(final.Content, *tc)
-	}
+	final.Content = buildStreamContent(accText, accThinking, reasoningItems, toolCalls, toolCallOrder)
 	if err := scanner.Err(); err != nil {
 		logrus.WithError(err).Error("openai response: stream scan error")
 		final.Error = err
+	} else {
+		// Upstream #2349/#2350 class: the SSE stream ended cleanly but never
+		// delivered response.completed, so the reply is truncated (proxy
+		// reset, upstream abort). Reporting it on ChatResponse.Error is what
+		// lets consumers distinguish a complete answer from a cut-off one;
+		// ending silently made the two indistinguishable. Cancellation and
+		// normal completion both returned above, so this is only truncation.
+		final.Error = fmt.Errorf("openai response: stream ended without response.completed (truncated)")
 	}
 	send(final)
+}
+
+// formatToolResultOutput renders a tool result for the Responses API
+// (upstream #2389): when the result carries image data blocks, the output
+// becomes native content parts (input_text / input_image) instead of being
+// flattened to text; plain results stay a single string.
+func formatToolResultOutput(blk *message.ToolResultBlock) any {
+	list, ok := blk.Output.([]message.ContentBlock)
+	if !ok {
+		return blk.GetOutputText()
+	}
+	hasImage := false
+	for _, sub := range list {
+		if db, ok := sub.(message.DataBlock); ok && strings.HasPrefix(db.GetMediaType(), "image/") {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return blk.GetOutputText()
+	}
+	parts := make([]map[string]any, 0, len(list))
+	for _, sub := range list {
+		switch b := sub.(type) {
+		case message.TextBlock:
+			parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
+		case message.DataBlock:
+			if !strings.HasPrefix(b.GetMediaType(), "image/") {
+				continue
+			}
+			switch src := b.Source.(type) {
+			case message.URLSource:
+				parts = append(parts, map[string]any{"type": "input_image", "image_url": src.URL})
+			case message.Base64Source:
+				parts = append(parts, map[string]any{
+					"type":      "input_image",
+					"image_url": "data:" + src.MediaType + ";base64," + src.Data,
+				})
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return blk.GetOutputText()
+	}
+	return parts
 }

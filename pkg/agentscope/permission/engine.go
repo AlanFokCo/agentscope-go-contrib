@@ -39,6 +39,26 @@ func (e *Engine) AddRule(rule Rule) {
 func (e *Engine) CheckPermission(tool Checker, input map[string]any) (Decision, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.checkPermissionDispatch(tool, input)
+}
+
+// CheckPermissionInContext evaluates like CheckPermission but against pctx
+// instead of the engine's stored Context. Callers use it to inject per-call
+// facts (e.g. a workspace backend implies a POSIX target shell) without
+// mutating shared engine state. The engine lock is still held, so rule maps
+// shared with the stored Context cannot be mutated concurrently. A nil pctx
+// falls back to the engine's Context.
+func (e *Engine) CheckPermissionInContext(tool Checker, input map[string]any, pctx *Context) (Decision, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if pctx == nil {
+		return e.checkPermissionDispatch(tool, input)
+	}
+	shadow := &Engine{Context: pctx}
+	return shadow.checkPermissionDispatch(tool, input)
+}
+
+func (e *Engine) checkPermissionDispatch(tool Checker, input map[string]any) (Decision, error) {
 	switch e.Context.Mode {
 	case ModeDefault:
 		return e.checkDefault(tool, input), nil

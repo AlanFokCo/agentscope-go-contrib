@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -159,8 +160,37 @@ func (m *TracingMiddleware) OnModelCall(ctx context.Context, input *ModelCallInp
 	// Enrich span with response attributes via a supplementary span if the
 	// tracer supports attributes. We create a zero-duration child span to
 	// attach post-call attributes since the parent span is about to end.
+	// A nil response creates no supplementary span (established contract);
+	// interrupted calls that surface a response with Error are still
+	// recorded as finish reason "interrupted" (upstream #2450).
 	if resp != nil {
-		var postAttrs []tracing.SpanAttribute
+		// Upstream #2450 records the real finish reason. Cancellation, a
+		// transport/handler failure, and a provider that delivered a partial
+		// reply (ChatResponse.Error, upstream #2350) are three different
+		// outcomes; collapsing them into one "interrupted" label made the
+		// attribute useless for telling a 429 from an abandoned consumer.
+		finishReason := "stop"
+		switch {
+		case ctx.Err() != nil:
+			finishReason = "interrupted"
+		case err != nil:
+			finishReason = "error"
+		case resp.Error != nil:
+			finishReason = "incomplete"
+		case resp.StopReason != "":
+			finishReason = resp.StopReason
+		}
+		// Marshal instead of concatenating: StopReason comes from the
+		// provider, and a quote or backslash in it produced an invalid JSON
+		// attribute value.
+		reasonsJSON, jsonErr := json.Marshal([]string{finishReason})
+		if jsonErr != nil {
+			reasonsJSON = []byte(`["stop"]`)
+		}
+		postAttrs := []tracing.SpanAttribute{{
+			Key:   "gen_ai.response.finish_reasons",
+			Value: string(reasonsJSON),
+		}}
 
 		if resp.ID != "" {
 			postAttrs = append(postAttrs, tracing.SpanAttribute{Key: "gen_ai.response.id", Value: resp.ID})

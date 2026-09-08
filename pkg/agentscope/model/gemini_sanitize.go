@@ -36,9 +36,47 @@ func sanitizeGeminiSchemaMap(s map[string]any) {
 	delete(s, "$schema")
 	delete(s, "additionalProperties")
 
-	// Rewrite {"type":"null"} to {"type":"object"}
-	if t, ok := s["type"].(string); ok && t == "null" {
-		s["type"] = "object"
+	// Rewrite null-only schemas to {"type":"object"} and simplify nullable
+	// type arrays (upstream #2437): ["string","null"] -> "string"; multiple
+	// non-null types -> anyOf of single-type schemas; ["null"] -> "object".
+	// A multi-type array alongside an existing anyOf is left untouched so
+	// Gemini rejects it loudly instead of us silently dropping the
+	// conjunctive constraint (Python raises ValueError in this case).
+	switch t := s["type"].(type) {
+	case string:
+		if t == "null" {
+			s["type"] = "object"
+		}
+	case []any:
+		var nonNull []string
+		allStrings := true
+		for _, item := range t {
+			str, ok := item.(string)
+			if !ok {
+				allStrings = false
+				break
+			}
+			if str != "null" {
+				nonNull = append(nonNull, str)
+			}
+		}
+		if allStrings {
+			switch {
+			case len(nonNull) == 1:
+				s["type"] = nonNull[0]
+			case len(nonNull) > 1:
+				if _, hasAnyOf := s["anyOf"]; !hasAnyOf {
+					anyOf := make([]any, 0, len(nonNull))
+					for _, tn := range nonNull {
+						anyOf = append(anyOf, map[string]any{"type": tn})
+					}
+					delete(s, "type")
+					s["anyOf"] = anyOf
+				}
+			default:
+				s["type"] = "object"
+			}
+		}
 	}
 
 	// Simplify anyOf with null entries
@@ -46,7 +84,7 @@ func sanitizeGeminiSchemaMap(s map[string]any) {
 		var filtered []any
 		for _, item := range anyOf {
 			if m, ok := item.(map[string]any); ok {
-				if t, ok := m["type"].(string); ok && t == "null" {
+				if isNullSchemaNode(m) {
 					continue
 				}
 				sanitizeGeminiSchemaMap(m)
@@ -91,4 +129,16 @@ func sanitizeGeminiSchemaMap(s map[string]any) {
 			}
 		}
 	}
+}
+
+// isNullSchemaNode reports whether a schema node represents only JSON null,
+// covering both {"type":"null"} and {"type":["null"]} (upstream #2437).
+func isNullSchemaNode(m map[string]any) bool {
+	switch v := m["type"].(type) {
+	case string:
+		return v == "null"
+	case []any:
+		return len(v) == 1 && v[0] == "null"
+	}
+	return false
 }

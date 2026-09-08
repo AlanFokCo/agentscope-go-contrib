@@ -58,6 +58,14 @@ type UnifiedAgent struct {
 	hookRunner     *loop.HookRunner
 	stateAwareness bool
 	responseFormat *model.ResponseFormat
+
+	// pendingCompressionUsage accumulates the token usage burned by
+	// context-compression model calls between drains (upstream #2433).
+	pendingCompressionUsage *model.ChatUsage
+
+	// agentDrivenCompression registers the compress_context tool so the
+	// model itself can trigger compression (upstream #2143).
+	agentDrivenCompression bool
 }
 
 // ReactConfig controls the ReAct reasoning-acting loop.
@@ -119,6 +127,15 @@ type TaskState struct {
 type AgentOption func(*UnifiedAgent)
 
 // WithToolkit sets the agent's toolkit.
+// WithAgentDrivenCompression registers the compress_context tool (upstream
+// #2143), letting the model compress the conversation history on its own
+// initiative in addition to the automatic token-threshold compression.
+func WithAgentDrivenCompression() AgentOption {
+	return func(a *UnifiedAgent) {
+		a.agentDrivenCompression = true
+	}
+}
+
 func WithToolkit(tk *tool.Toolkit) AgentOption {
 	return func(a *UnifiedAgent) { a.toolkit = tk }
 }
@@ -251,6 +268,12 @@ func NewUnifiedAgent(name, systemPrompt string, m model.ChatModel, opts ...Agent
 	}
 	for _, opt := range opts {
 		opt(a)
+	}
+	// Upstream #2143: register the agent-driven compression tool AFTER all
+	// options ran, so a WithToolkit replacement does not drop it.
+	if a.agentDrivenCompression && a.toolkit != nil {
+		a.toolkit.AddGroup("context_management",
+			tool.NewCompressContextTool(a.compressContextForTool))
 	}
 	return a
 }
@@ -610,6 +633,14 @@ reactLoop:
 			if compacted {
 				emit(ctx, ch, event.NewCustomEvent(replyID, "compacted", nil))
 			}
+			// Upstream #2433: surface compression-call usage as a
+			// model-call-end event so budgets, cost tracking and
+			// reply-message accounting include it.
+			if cu := a.takeCompressionUsage(); cu != nil {
+				emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID,
+					cu.InputTokens, cu.OutputTokens,
+					cu.CacheCreationInputTokens, cu.CacheInputTokens))
+			}
 
 			modelMsgs := a.prepareModelInput(ctx)
 			schemas := a.toolkit.GetToolSchemas()
@@ -635,6 +666,20 @@ reactLoop:
 
 			hooks.AfterModelCall(curState, iter, nil)
 			madeProgress = true
+
+			// Upstream #2350: a provider can deliver a partial reply and
+			// report the truncation on ChatResponse.Error instead of failing
+			// the call. Nothing downstream inspected that field, so a
+			// cut-off stream was indistinguishable from a complete one.
+			// Surface it for operators and consumers; the accumulated
+			// content is still saved and used, because a truncated reply is
+			// usually more useful than none.
+			if resp.Error != nil {
+				logrus.WithError(resp.Error).WithField("agent", a.name).
+					Warn("model returned a partial response")
+				emit(ctx, ch, event.NewCustomEvent(replyID, "model_partial_response",
+					map[string]any{"error": resp.Error.Error()}))
+			}
 
 			var inputTok, outputTok, cacheCreate, cacheRead int
 			if resp.Usage != nil {
@@ -695,15 +740,18 @@ reactLoop:
 			curState = protocol.StateReason
 		}
 
-		if iter == a.reactCfg.MaxIters-1 {
-			emit(ctx, ch, event.NewExceedMaxItersEvent(replyID, a.name))
-		}
 	}
 
 	if !finishedNormally {
-		// Iteration exhaustion (Python parity: EXCEED_MAX_ITERS). The end
-		// is swallowable like any non-interrupted end; the next round
-		// restarts the iteration counter.
+		// Upstream #2443: the iteration budget is exhausted. Give the model
+		// ONE forced finalization call — tools disabled plus a system
+		// reminder — so the reply ends with a text summary instead of
+		// silence. The reply still finishes as EXCEED_MAX_ITERS (Python
+		// parity); the end is swallowable like any non-interrupted end.
+		if a.forcedFinalSummary(ctx, ch, replyID, modelCallHandler) {
+			madeProgress = true
+		}
+		emit(ctx, ch, event.NewExceedMaxItersEvent(replyID, a.name))
 		return types.ReplyExceedMaxIters, madeProgress, nil
 	}
 	return types.ReplyCompleted, madeProgress, nil
@@ -783,14 +831,15 @@ func (a *UnifiedAgent) buildActingHandler() middleware.ActingHandler {
 }
 
 // executeToolCallWithPermission checks permissions before executing a tool call.
-// Returns the result state and output text.
+// It returns the result state, the output text, and any non-text blocks the
+// tool produced (see toolOutcome).
 func (a *UnifiedAgent) executeToolCallWithPermission(
 	ctx context.Context,
 	ch chan<- event.Event,
 	replyID string,
 	tc *message.ToolCallBlock,
 	actingHandler middleware.ActingHandler,
-) (message.ToolResultState, string) {
+) toolOutcome {
 	if a.engine != nil && tc.State != message.ToolCallAllowed {
 		t := a.toolkit.Get(tc.Name)
 		if t == nil {
@@ -804,10 +853,16 @@ func (a *UnifiedAgent) executeToolCallWithPermission(
 				fmt.Sprintf("parse tool input: %v", err))
 		}
 
-		decision, err := a.engine.CheckPermission(t, input)
-		if err != nil {
+		var decision permission.Decision
+		var permErr error
+		if pctx := tool.BackendPermissionContext(ctx, a.engine.Context); pctx != nil {
+			decision, permErr = a.engine.CheckPermissionInContext(t, input, pctx)
+		} else {
+			decision, permErr = a.engine.CheckPermission(t, input)
+		}
+		if permErr != nil {
 			return a.emitToolResult(ctx, ch, replyID, tc, message.ToolResultError,
-				fmt.Sprintf("permission check error: %v", err))
+				fmt.Sprintf("permission check error: %v", permErr))
 		}
 
 		switch decision.Behavior {
@@ -846,12 +901,18 @@ func (a *UnifiedAgent) executeToolCallWithPermission(
 			const reason = "External execution timed out, canceled, or no matching result was submitted"
 			emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, reason))
 			emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, message.ToolResultError))
-			return message.ToolResultError, reason
+			return toolOutcome{state: message.ToolResultError, text: reason}
 		}
 		outputText := result.GetOutputText()
 		emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, outputText))
 		emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, result.State))
-		return result.State, outputText
+		// An externally submitted result may itself carry blocks (e.g. a
+		// screenshot produced outside the process); preserve them.
+		var extra []message.ContentBlock
+		if list, ok := result.Output.([]message.ContentBlock); ok {
+			extra = nonTextBlocks(list)
+		}
+		return toolOutcome{state: result.State, text: outputText, extra: extra}
 	}
 
 	return a.executeTool(ctx, ch, replyID, tc, actingHandler)
@@ -1014,24 +1075,22 @@ func (a *UnifiedAgent) executeTool(
 	replyID string,
 	tc *message.ToolCallBlock,
 	actingHandler middleware.ActingHandler,
-) (message.ToolResultState, string) {
+) toolOutcome {
 	t := a.toolkit.Get(tc.Name)
 	if st, ok := t.(tool.StreamingTool); ok {
-		var resultState message.ToolResultState
-		var outputText string
+		var streamed toolOutcome
 		core := func(coreCtx context.Context, _ *middleware.ActingInput) (*tool.ToolResponse, error) {
-			resultState, outputText = a.executeStreamingTool(coreCtx, ch, replyID, tc, st)
-			return &tool.ToolResponse{
-				Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: outputText}},
-				State:   resultState,
-			}, nil
+			streamed = a.executeStreamingTool(coreCtx, ch, replyID, tc, st)
+			content := []message.ContentBlock{message.TextBlock{Type: "text", Text: streamed.text}}
+			content = append(content, streamed.extra...)
+			return &tool.ToolResponse{Content: content, State: streamed.state}, nil
 		}
 		handler := core
 		if len(a.middlewares) > 0 {
 			handler = middleware.BuildActingChain(a.middlewares, core)
 		}
 		_, _ = handler(ctx, &middleware.ActingInput{AgentName: a.name, ToolCall: *tc})
-		return resultState, outputText
+		return streamed
 	}
 
 	toolResp, execErr := actingHandler(ctx, &middleware.ActingInput{
@@ -1061,10 +1120,17 @@ func (a *UnifiedAgent) executeTool(
 
 	outputText = a.truncateToolResult(ctx, outputText, tc.ID)
 	var toolMeta map[string]any
+	var extra []message.ContentBlock
 	if toolResp != nil {
 		toolMeta = toolResp.Metadata
+		// Upstream #2114: keep non-text blocks (images) so multimodal
+		// providers can render them. Only on success — an error response
+		// carries no payload worth forwarding.
+		if resultState == message.ToolResultSuccess {
+			extra = nonTextBlocks(toolResp.Content)
+		}
 	}
-	return a.emitToolResult(ctx, ch, replyID, tc, resultState, outputText, toolMeta)
+	return a.emitToolResultWithExtra(ctx, ch, replyID, tc, resultState, outputText, extra, toolMeta)
 }
 
 // executeStreamingTool runs a StreamingTool and emits incremental events.
@@ -1074,7 +1140,7 @@ func (a *UnifiedAgent) executeStreamingTool(
 	replyID string,
 	tc *message.ToolCallBlock,
 	st tool.StreamingTool,
-) (message.ToolResultState, string) {
+) toolOutcome {
 	input, parseErr := tc.ParseInput()
 	if parseErr != nil {
 		return a.emitToolResult(ctx, ch, replyID, tc, message.ToolResultError,
@@ -1091,6 +1157,7 @@ func (a *UnifiedAgent) executeStreamingTool(
 
 	var finalState message.ToolResultState
 	var finalText string
+	var finalExtra []message.ContentBlock
 
 	for chunk := range streamCh {
 		if chunk.IsFinal {
@@ -1100,6 +1167,7 @@ func (a *UnifiedAgent) executeStreamingTool(
 					finalText += tb.Text
 				}
 			}
+			finalExtra = nonTextBlocks(chunk.Content)
 		} else {
 			for _, b := range chunk.Content {
 				if tb, ok := b.(message.TextBlock); ok {
@@ -1114,8 +1182,9 @@ func (a *UnifiedAgent) executeStreamingTool(
 	}
 
 	finalText = a.truncateToolResult(ctx, finalText, tc.ID)
+	emitToolResultData(ctx, ch, replyID, tc.ID, finalExtra)
 	emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, finalState))
-	return finalState, finalText
+	return toolOutcome{state: finalState, text: finalText, extra: finalExtra}
 }
 
 func (a *UnifiedAgent) truncateToolResult(ctx context.Context, outputText, toolCallID string) string {
@@ -1144,17 +1213,96 @@ func (a *UnifiedAgent) emitToolResult(
 	state message.ToolResultState,
 	text string,
 	metadata ...map[string]any,
-) (message.ToolResultState, string) {
+) toolOutcome {
+	return a.emitToolResultWithExtra(ctx, ch, replyID, tc, state, text, nil, metadata...)
+}
+
+// emitToolResultWithExtra is emitToolResult plus the non-text blocks a tool
+// produced (upstream #2114 images). They are emitted as tool_result_data_delta
+// events between the text delta and tool_result_end so consumers that rebuild
+// a message purely from the event stream — channel gateways, the console
+// renderer, replay tapes — see the same image the model does.
+// message.ApplyEvent already merges them via appendResultData.
+func (a *UnifiedAgent) emitToolResultWithExtra(
+	ctx context.Context,
+	ch chan<- event.Event,
+	replyID string,
+	tc *message.ToolCallBlock,
+	state message.ToolResultState,
+	text string,
+	extra []message.ContentBlock,
+	metadata ...map[string]any,
+) toolOutcome {
 	emit(ctx, ch, event.NewToolResultStartEvent(replyID, tc.ID, tc.Name))
 	if text != "" {
 		emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, text))
 	}
+	emitToolResultData(ctx, ch, replyID, tc.ID, extra)
 	end := event.NewToolResultEndEvent(replyID, tc.ID, state)
 	if len(metadata) > 0 && len(metadata[0]) > 0 {
 		end.Metadata = metadata[0] // e.g. Edit/Write "diff" (M6b)
 	}
 	emit(ctx, ch, end)
-	return state, text
+	return toolOutcome{state: state, text: text, extra: extra}
+}
+
+// maxEventInlineDataBytes caps the base64 payload carried by a single
+// tool_result_data_delta event.
+//
+// The model does not need this event: it reads the image from
+// ToolResultBlock.Output. The event exists for consumers that rebuild a message
+// from the stream, and those (channel gateways, the console renderer) cannot
+// render a few hundred KB of base64 anyway. What they can do is store it:
+// middleware.NewRunJSONL serializes every event verbatim, and the flight
+// recorder's tail is capped by COUNT (tailCap) with no byte accounting, so an
+// uncapped image event turns a reply with a handful of screenshots into
+// megabytes of run log and a multi-megabyte crash dump. Above the cap the
+// event is dropped with a debug log and the block stays on Output.
+const maxEventInlineDataBytes = 64 * 1024
+
+// emitToolResultData turns non-text tool output into tool_result_data_delta
+// events. An event that would violate the source invariant (exactly one of
+// data/url, upstream #2370), or whose payload exceeds maxEventInlineDataBytes,
+// is skipped rather than emitted: the block is still carried on
+// ToolResultBlock.Output, so nothing is lost for the model.
+func emitToolResultData(
+	ctx context.Context,
+	ch chan<- event.Event,
+	replyID string,
+	toolCallID string,
+	extra []message.ContentBlock,
+) {
+	for _, b := range extra {
+		db, ok := b.(message.DataBlock)
+		if !ok {
+			continue
+		}
+		var data, url string
+		switch src := db.Source.(type) {
+		case message.Base64Source:
+			data = src.Data
+		case message.URLSource:
+			url = src.URL
+		default:
+			continue
+		}
+		if len(data) > maxEventInlineDataBytes {
+			logrus.WithFields(logrus.Fields{
+				"tool_call_id": toolCallID,
+				"media_type":   db.GetMediaType(),
+				"bytes":        len(data),
+				"cap":          maxEventInlineDataBytes,
+			}).Debug("tool result data too large for the event stream; it stays on the tool result output")
+			continue
+		}
+		evt := event.NewToolResultDataDeltaEvent(replyID, toolCallID, db.ID, db.GetMediaType(), data, url)
+		if err := evt.Validate(); err != nil {
+			logrus.WithError(err).WithField("tool_call_id", toolCallID).
+				Debug("skipping invalid tool result data delta")
+			continue
+		}
+		emit(ctx, ch, evt)
+	}
 }
 
 func rulesToAny(rules []permission.Rule) []any {
@@ -1267,6 +1415,50 @@ type toolResult struct {
 	index int
 	state message.ToolResultState
 	text  string
+	extra []message.ContentBlock
+}
+
+// toolOutcome is the result of executing one tool call.
+//
+// text is the tool-result string the model sees. extra carries the non-text
+// blocks the tool produced (images from Read, upstream #2114). Keeping them
+// separate matters: the rest of the pipeline is string-based, and dropping
+// non-text blocks turned an image read into an EMPTY tool result, which the
+// model reads as "the file is empty".
+type toolOutcome struct {
+	state message.ToolResultState
+	text  string
+	extra []message.ContentBlock
+}
+
+// nonTextBlocks returns the blocks of a tool response that are not text,
+// preserving order. It returns nil for text-only responses so the common path
+// keeps storing a plain string in ToolResultBlock.Output.
+func nonTextBlocks(content []message.ContentBlock) []message.ContentBlock {
+	var out []message.ContentBlock
+	for _, b := range content {
+		if _, isText := b.(message.TextBlock); isText {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// toolResultOutput builds ToolResultBlock.Output: a plain string when the tool
+// produced only text (backwards compatible with every consumer), or a block
+// list when there is something non-text to preserve. The text is repeated as a
+// leading TextBlock so GetOutputText and text-only formatters still work.
+func toolResultOutput(text string, extra []message.ContentBlock) any {
+	if len(extra) == 0 {
+		return text
+	}
+	blocks := make([]message.ContentBlock, 0, len(extra)+1)
+	if text != "" {
+		blocks = append(blocks, message.TextBlock{Type: "text", Text: text})
+	}
+	blocks = append(blocks, extra...)
+	return blocks
 }
 
 // wouldRequireHITL reports whether executing tc would block for human-in-the-loop
@@ -1353,14 +1545,14 @@ func (a *UnifiedAgent) executeAndRecord(
 	emit(ctx, ch, start)
 	emit(ctx, ch, event.NewToolCallEndEvent(replyID, tc.ID))
 
-	resultState, outputText := a.executeToolCallWithPermission(ctx, ch, replyID, tc, actingHandler)
+	outcome := a.executeToolCallWithPermission(ctx, ch, replyID, tc, actingHandler)
 
 	resultBlock := message.ToolResultBlock{
 		Type:   "tool_result",
 		ID:     tc.ID,
 		Name:   tc.Name,
-		Output: outputText,
-		State:  resultState,
+		Output: toolResultOutput(outcome.text, outcome.extra),
+		State:  outcome.state,
 	}
 	a.saveToContext([]message.ContentBlock{resultBlock}, nil)
 	a.updateToolCallState(tc.ID, message.ToolCallFinished)
@@ -1382,8 +1574,8 @@ func (a *UnifiedAgent) executeConcurrentBatch(
 	for i, tc := range calls {
 		go func(idx int, tc *message.ToolCallBlock) {
 			defer wg.Done()
-			state, text := a.executeToolCallWithPermission(ctx, nil, replyID, tc, actingHandler)
-			results[idx] = toolResult{index: idx, state: state, text: text}
+			outcome := a.executeToolCallWithPermission(ctx, nil, replyID, tc, actingHandler)
+			results[idx] = toolResult{index: idx, state: outcome.state, text: outcome.text, extra: outcome.extra}
 		}(i, &tc)
 	}
 	wg.Wait()
@@ -1400,13 +1592,14 @@ func (a *UnifiedAgent) executeConcurrentBatch(
 		if r.text != "" {
 			emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, r.text))
 		}
+		emitToolResultData(ctx, ch, replyID, tc.ID, r.extra)
 		emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, r.state))
 
 		resultBlock := message.ToolResultBlock{
 			Type:   "tool_result",
 			ID:     tc.ID,
 			Name:   tc.Name,
-			Output: r.text,
+			Output: toolResultOutput(r.text, r.extra),
 			State:  r.state,
 		}
 		a.saveToContext([]message.ContentBlock{resultBlock}, nil)
@@ -1428,4 +1621,89 @@ func filterAudioBlocks(content []message.ContentBlock) []message.ContentBlock {
 		filtered = append(filtered, b)
 	}
 	return filtered
+}
+
+// forcedFinalSummary runs the single tools-disabled finalization model call
+// after the react budget is exhausted (upstream #2443). Events mirror a
+// regular loop iteration so consumers and accounting see the call. It
+// reports whether a final response was produced.
+func (a *UnifiedAgent) forcedFinalSummary(ctx context.Context, ch chan<- event.Event, replyID string, modelCallHandler middleware.ModelCallHandler) bool {
+	hint := fmt.Sprintf(
+		"<system-reminder>You have reached the maximum of %d reasoning-acting iterations. Summarize the work and findings so far and return the final answer as text. Do not call any tools.</system-reminder>",
+		a.reactCfg.MaxIters)
+	msgs := a.prepareModelInput(ctx)
+	msgs = append(msgs, message.NewMsg("system", message.RoleUser, []message.ContentBlock{
+		message.HintBlock{
+			Type:   "hint",
+			Source: `{"label": "System", "sublabel": "Max Iterations Reached"}`,
+			Hint:   hint,
+		},
+	}))
+
+	emit(ctx, ch, event.NewModelCallStartEvent(replyID, ""))
+	resp, err := modelCallHandler(ctx, &middleware.ModelCallInput{
+		AgentName:  a.name,
+		Messages:   msgs,
+		Tools:      nil,
+		ToolChoice: &model.ToolChoice{Mode: "none"},
+	})
+	if err != nil {
+		emit(ctx, ch, event.NewModelCallEndEvent(replyID, 0, 0))
+		logrus.WithError(err).WithField("agent", a.name).
+			Warn("forced finalization call failed")
+		return false
+	}
+
+	var inputTok, outputTok, cacheCreate, cacheRead int
+	if resp.Usage != nil {
+		inputTok = resp.Usage.InputTokens
+		outputTok = resp.Usage.OutputTokens
+		cacheCreate = resp.Usage.CacheCreationInputTokens
+		cacheRead = resp.Usage.CacheInputTokens
+	}
+	emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID, inputTok, outputTok, cacheCreate, cacheRead))
+
+	// tool_choice "none" is a request, not a guarantee: local and
+	// proxy-backed providers (Ollama, vLLM, assorted OpenAI-compatible
+	// gateways) routinely ignore it and return tool calls anyway. Those
+	// calls will never be executed — this reply ends with
+	// ReplyExceedMaxIters — but if they were stored, the next Reply would
+	// find pending calls on the last assistant message and run them as
+	// ghost tool calls (or park waiting for confirmation). Drop them.
+	content := resp.Content
+	if dropped := countToolCallBlocks(content); dropped > 0 {
+		logrus.WithFields(logrus.Fields{
+			"agent": a.name,
+			"calls": dropped,
+		}).Warn("forced finalization returned tool calls despite tool_choice=none; dropping them")
+		content = withoutToolCallBlocks(content)
+	}
+
+	a.saveToContext(content, resp.Usage)
+	emitContentEvents(ctx, ch, replyID, content)
+	return true
+}
+
+// countToolCallBlocks reports how many tool calls a content slice carries.
+func countToolCallBlocks(content []message.ContentBlock) int {
+	n := 0
+	for _, b := range content {
+		if _, ok := b.(message.ToolCallBlock); ok {
+			n++
+		}
+	}
+	return n
+}
+
+// withoutToolCallBlocks strips tool calls, keeping text and thinking so the
+// finalization reply still contributes its summary.
+func withoutToolCallBlocks(content []message.ContentBlock) []message.ContentBlock {
+	out := make([]message.ContentBlock, 0, len(content))
+	for _, b := range content {
+		if _, ok := b.(message.ToolCallBlock); ok {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }

@@ -53,6 +53,22 @@ type Scheduler interface {
 	Close() error
 }
 
+// TaskRemover is an optional Scheduler capability for dropping a task entry
+// that has already fired and will not run again.
+//
+// It exists because a cron-style schedule re-arms by scheduling a fresh
+// one-shot task per fire. Without a removal path, a per-minute schedule
+// accumulates one dead map entry and one context.CancelFunc per fire for the
+// lifetime of the process. Callers must type-assert for it so custom Scheduler
+// implementations stay compatible:
+//
+//	if r, ok := sched.(schedule.TaskRemover); ok {
+//	    r.Remove(taskID)
+//	}
+type TaskRemover interface {
+	Remove(taskID string)
+}
+
 // InMemoryScheduler uses time.Timer/time.Ticker for process-local scheduling.
 type InMemoryScheduler struct {
 	mu      sync.Mutex
@@ -200,6 +216,20 @@ func (s *InMemoryScheduler) setStatus(taskID string, status TaskStatus) {
 	}
 }
 
+// Remove drops an already-fired task entry, releasing its context. It is a
+// no-op for unknown IDs, so callers do not have to track whether the task was
+// canceled or completed first. Removing a task that has not fired yet would
+// abandon it silently — callers must only remove tasks whose callback has
+// returned.
+func (s *InMemoryScheduler) Remove(taskID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.tasks[taskID]; ok {
+		e.cancel()
+		delete(s.tasks, taskID)
+	}
+}
+
 // Cancel stops a scheduled task.
 func (s *InMemoryScheduler) Cancel(_ context.Context, taskID string) error {
 	s.mu.Lock()
@@ -264,5 +294,8 @@ func (s *InMemoryScheduler) Close() error {
 	return nil
 }
 
-// Compile-time interface check.
-var _ Scheduler = (*InMemoryScheduler)(nil)
+// Compile-time interface checks.
+var (
+	_ Scheduler   = (*InMemoryScheduler)(nil)
+	_ TaskRemover = (*InMemoryScheduler)(nil)
+)

@@ -9,6 +9,7 @@ import (
 	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/audit"
 	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
 	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
 )
 
@@ -37,6 +38,12 @@ type RepetitionBreakerMiddleware struct {
 	hint      string
 	allowlist map[string]bool
 
+	// Error-streak dimension (upstream #1816): the SAME call failing
+	// repeatedly is a distinct spin shape from identical successes.
+	errThreshold int
+	errHint      string
+	errStreak    map[string]repetitionStreak
+
 	mu     sync.Mutex
 	streak map[string]repetitionStreak // per agent name + reply ID
 }
@@ -47,6 +54,8 @@ type repetitionStreak struct {
 }
 
 const defaultRepetitionHint = "<system-reminder>You have repeated the exact same tool call several times without progress. Stop retrying it and try a different approach, or report that the task cannot be completed.</system-reminder>"
+
+const defaultRepetitionErrorHint = "<system-reminder>The exact same tool call has failed repeatedly. Do not retry it unchanged: fix the arguments, use a different tool, or report that the task cannot be completed.</system-reminder>"
 
 // RepetitionBreakerOption configures NewRepetitionBreaker.
 type RepetitionBreakerOption func(*RepetitionBreakerMiddleware)
@@ -80,14 +89,37 @@ func WithRepetitionAllowlist(names ...string) RepetitionBreakerOption {
 	}
 }
 
+// WithRepetitionErrorThreshold sets how many consecutive identical FAILING
+// calls trigger the error hint (default 3); the call after that is aborted
+// (upstream #1816).
+func WithRepetitionErrorThreshold(n int) RepetitionBreakerOption {
+	return func(m *RepetitionBreakerMiddleware) {
+		if n > 0 {
+			m.errThreshold = n
+		}
+	}
+}
+
+// WithRepetitionErrorHint overrides the repeated-failure reminder text.
+func WithRepetitionErrorHint(hint string) RepetitionBreakerOption {
+	return func(m *RepetitionBreakerMiddleware) {
+		if hint != "" {
+			m.errHint = hint
+		}
+	}
+}
+
 // NewRepetitionBreaker creates the middleware with defaults (threshold 3).
 func NewRepetitionBreaker(opts ...RepetitionBreakerOption) *RepetitionBreakerMiddleware {
 	m := &RepetitionBreakerMiddleware{
 		BaseMiddleware: BaseMiddleware{MiddlewareKey: "repetition-breaker"},
 		threshold:      3,
 		hint:           defaultRepetitionHint,
+		errThreshold:   3,
+		errHint:        defaultRepetitionErrorHint,
 		allowlist:      map[string]bool{},
 		streak:         map[string]repetitionStreak{},
+		errStreak:      map[string]repetitionStreak{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -111,8 +143,10 @@ func (m *RepetitionBreakerMiddleware) OnReply(ctx context.Context, input ReplyIn
 	m.mu.Lock()
 	if len(m.streak) >= streakMapLimit {
 		m.streak = map[string]repetitionStreak{}
+		m.errStreak = map[string]repetitionStreak{}
 	}
 	m.streak[key] = repetitionStreak{}
+	m.errStreak[key] = repetitionStreak{}
 	m.mu.Unlock()
 	return next(ctx, input)
 }
@@ -128,15 +162,30 @@ func (m *RepetitionBreakerMiddleware) OnActing(ctx context.Context, input *Actin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	streakKey := repetitionStreakKey(ctx, input.AgentName)
-	st := m.streak[streakKey]
+	key := repetitionKey(input.ToolCall.Name, input.ToolCall.Input)
 
-	if err != nil {
-		// Failed calls may legitimately be retried; reset the streak.
+	// Upstream #1816: a failed result (handler error OR error-state tool
+	// response) feeds the error streak and resets the success streak — the
+	// doc contract always said only successful calls count toward the spin
+	// streak; error-state responses with a nil Go error used to slip in.
+	failed := err != nil || (resp != nil && resp.State == message.ToolResultError)
+	if failed {
 		m.streak[streakKey] = repetitionStreak{}
+		es := m.errStreak[streakKey]
+		if es.lastKey == key {
+			es.count++
+		} else {
+			es = repetitionStreak{lastKey: key, count: 1}
+		}
+		m.errStreak[streakKey] = es
+		if es.count > m.errThreshold {
+			return nil, agenterrors.ErrToolRepetition
+		}
 		return resp, err
 	}
 
-	key := repetitionKey(input.ToolCall.Name, input.ToolCall.Input)
+	m.errStreak[streakKey] = repetitionStreak{}
+	st := m.streak[streakKey]
 	if st.lastKey == key {
 		st.count++
 	} else {
@@ -155,8 +204,13 @@ func (m *RepetitionBreakerMiddleware) OnActing(ctx context.Context, input *Actin
 func (m *RepetitionBreakerMiddleware) OnSystemPrompt(ctx context.Context, agentName string, currentPrompt string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if st, ok := m.streak[repetitionStreakKey(ctx, agentName)]; ok && st.count >= m.threshold {
+	key := repetitionStreakKey(ctx, agentName)
+	if st, ok := m.streak[key]; ok && st.count >= m.threshold {
 		return currentPrompt + "\n\n" + m.hint
+	}
+	// Upstream #1816: the error-streak hint is an independent dimension.
+	if es, ok := m.errStreak[key]; ok && es.count >= m.errThreshold {
+		return currentPrompt + "\n\n" + m.errHint
 	}
 	return currentPrompt
 }

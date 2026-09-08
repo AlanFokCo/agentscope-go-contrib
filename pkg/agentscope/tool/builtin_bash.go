@@ -377,9 +377,21 @@ func (t *bashTool) CheckPermissions(input map[string]any, ctx *permission.Contex
 		}
 	}
 
-	// Step 1.5: PowerShell dangerous command patterns
-	shell := platform.Detect()
-	if shell.Type == platform.ShellPowerShell {
+	// Step 1.5: PowerShell dangerous command patterns. The effective shell
+	// honors an explicit TargetShell pin from the permission context (the
+	// orchestrator sets "posix" when a workspace backend executes the
+	// command — container backends are POSIX regardless of host OS);
+	// otherwise it falls back to host detection.
+	powerShellTarget := platform.Detect().Type == platform.ShellPowerShell
+	if ctx != nil {
+		switch strings.ToLower(strings.TrimSpace(ctx.TargetShell)) {
+		case "posix", "sh", "bash", "unix":
+			powerShellTarget = false
+		case "powershell", "pwsh":
+			powerShellTarget = true
+		}
+	}
+	if powerShellTarget {
 		if dangerous, reason := platform.CheckPowerShellDangerous(cmdStr); dangerous {
 			return permission.Decision{
 				Behavior:     permission.BehaviorAsk,

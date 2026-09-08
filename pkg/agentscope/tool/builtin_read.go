@@ -3,6 +3,9 @@ package tool
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
 )
 
@@ -77,6 +81,31 @@ func (t *readTool) Execute(ctx context.Context, args map[string]any) (*ToolRespo
 	// caller-provided (workspace-relative) path.
 	if b, ok := getBackendIfSet(ctx); ok {
 		p := pathpkg.Clean(path)
+		rc := GetReadCache(ctx)
+
+		// Upstream #2092: a cached copy is only usable if freshness can be
+		// judged by the backend's OWN filesystem — a host os.Stat of a
+		// workspace-relative path is meaningless (or worse, matches an
+		// unrelated host file). The stat is a container exec round-trip, so
+		// it is paid only when there is an entry to validate, never just to
+		// build a cache key.
+		var rawLines []string
+		if rc != nil && rc.HasBeenRead(p) {
+			if mt := backendMtime(ctx, b, p); mt != nil {
+				if cached := rc.GetCacheWithMtime(p, mt); cached != nil {
+					rawLines = cached.Lines
+				}
+			} else {
+				// Entry exists but the backend can no longer vouch for its
+				// freshness: drop it and re-read rather than serve possibly
+				// stale content.
+				rc.Remove(p)
+			}
+		}
+		if rawLines != nil {
+			return NewTextResponse(formatReadLines(rawLines, offset, limit)), nil
+		}
+
 		data, err := b.ReadFile(ctx, p)
 		if err != nil {
 			return NewErrorResponse(fmt.Errorf("file not found: %s", path)), nil
@@ -84,9 +113,22 @@ func (t *readTool) Execute(ctx context.Context, args map[string]any) (*ToolRespo
 		if int64(len(data)) > MaxFileSize {
 			return NewErrorResponse(fmt.Errorf("file too large (%d bytes, max %d): %s", len(data), MaxFileSize, path)), nil
 		}
-		rawLines := splitReadLines(data)
-		if rc := GetReadCache(ctx); rc != nil {
-			rc.CacheFile(p, rawLines)
+		// Upstream #2114: image files come back as DataBlocks so multimodal
+		// models can actually see them instead of receiving mojibake.
+		if mt, isImage := imageMediaTypesByExt[strings.ToLower(pathpkg.Ext(p))]; isImage {
+			if len(data) > MaxInlineImageBytes {
+				return newOversizeImageResponse(path, pathpkg.Base(p), mt, len(data)), nil
+			}
+			return newImageDataResponse(pathpkg.Base(p), data, mt), nil
+		}
+		rawLines = splitReadLines(data)
+		if rc != nil {
+			// Cache only when the backend supplied a real mtime. Without one
+			// there is no trustworthy freshness key, and falling back to a
+			// host stat would key the entry on an unrelated file.
+			if mt := backendMtime(ctx, b, p); mt != nil {
+				rc.CacheFileWithMtime(p, rawLines, mt)
+			}
 		}
 		return NewTextResponse(formatReadLines(rawLines, offset, limit)), nil
 	}
@@ -108,6 +150,18 @@ func (t *readTool) Execute(ctx context.Context, args map[string]any) (*ToolRespo
 	}
 	if info.Size() > MaxFileSize {
 		return NewErrorResponse(fmt.Errorf("file too large (%d bytes, max %d): %s", info.Size(), MaxFileSize, path)), nil
+	}
+
+	// Upstream #2114: image files come back as DataBlocks (host path).
+	if mt, isImage := imageMediaTypesByExt[strings.ToLower(filepath.Ext(abs))]; isImage {
+		if info.Size() > MaxInlineImageBytes {
+			return newOversizeImageResponse(path, filepath.Base(abs), mt, int(info.Size())), nil
+		}
+		data, readErr := os.ReadFile(abs)
+		if readErr != nil {
+			return NewErrorResponse(fmt.Errorf("read: %w", readErr)), nil
+		}
+		return newImageDataResponse(filepath.Base(abs), data, mt), nil
 	}
 
 	var rawLines []string
@@ -204,7 +258,7 @@ func ReadTool() Tool {
 	return &readTool{
 		BaseTool: BaseTool{
 			ToolName:        "Read",
-			ToolDescription: "Read a text file's contents with line numbers. Supports offset and limit for large files (max 1MB).",
+			ToolDescription: "Read a file's contents with line numbers. Supports offset and limit for large files (max 1MB). Image files (png/jpg/gif/webp/bmp/tiff/ico up to 256KB) are returned as an image the model can see.",
 			ToolSchema:      readSchema,
 			ReadOnly:        true,
 			ConcurrencySafe: true,
@@ -224,4 +278,70 @@ func toInt(v any) int {
 	default:
 		return 0
 	}
+}
+
+// imageMediaTypesByExt maps image file extensions to IANA media types
+// (upstream #2114). PDF page rendering is intentionally NOT ported: it
+// needs a rasterizer dependency, and Go's Read stays zero-dependency.
+var imageMediaTypesByExt = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+	".tiff": "image/tiff",
+	".tif":  "image/tiff",
+	".ico":  "image/x-icon",
+}
+
+// imagePlaceholder describes an image for consumers that cannot see pixels:
+// text-only providers, logs, token counters, and the tool-result string the
+// agent records. Without it the result would be an empty string and the model
+// would conclude the file is empty.
+func imagePlaceholder(name, mediaType string, size int) string {
+	return fmt.Sprintf("[%s: %s, %d bytes]", name, mediaType, size)
+}
+
+// newImageDataResponse wraps raw image bytes in a base64 DataBlock result.
+//
+// The response always carries a leading TextBlock placeholder as well, so a
+// pipeline that only understands text (or a model without image input) reports
+// "this is an image of N bytes" instead of an empty tool result.
+func newImageDataResponse(name string, data []byte, mediaType string) *ToolResponse {
+	var idBuf [8]byte
+	if _, err := rand.Read(idBuf[:]); err != nil {
+		// crypto/rand never fails in practice; fall back to a name-based ID.
+		copy(idBuf[:], name)
+	}
+	return &ToolResponse{
+		Content: []message.ContentBlock{
+			message.TextBlock{
+				Type: "text",
+				Text: imagePlaceholder(name, mediaType, len(data)),
+			},
+			message.DataBlock{
+				Type: "data",
+				ID:   "img_" + hex.EncodeToString(idBuf[:]),
+				Name: name,
+				Source: message.Base64Source{
+					Type:      "base64",
+					Data:      base64.StdEncoding.EncodeToString(data),
+					MediaType: mediaType,
+				},
+			},
+		},
+		State: message.ToolResultSuccess,
+	}
+}
+
+// newOversizeImageResponse reports an image that is too large to inline as a
+// text-only result. A 1 MB PNG becomes ~1.37 MB of base64, which the token
+// estimator reads as roughly 250k tokens: one screenshot would blow the
+// context window and immediately trigger compression.
+func newOversizeImageResponse(path, name, mediaType string, size int) *ToolResponse {
+	return NewTextResponse(fmt.Sprintf(
+		"%s (%s, %d bytes) is an image too large to inline (limit %d bytes). "+
+			"It was not loaded into the context.",
+		path, mediaType, size, MaxInlineImageBytes))
 }

@@ -175,6 +175,13 @@ func (w *DockerWorkspace) Close(ctx context.Context) error {
 	return cmd.Run()
 }
 
+// ExecPath implements ExecPathResolver: this backend's Execute runs the
+// command with the caller's path resolved the same way ReadFile resolves it,
+// which for this workspace means the absolute in-sandbox path. A relative path
+// would be resolved by the shell against the image/sandbox working directory
+// instead, i.e. against a different file.
+func (w *DockerWorkspace) ExecPath(callerPath string) string { return w.resolvePath(callerPath) }
+
 func (w *DockerWorkspace) resolvePath(path string) string {
 	if strings.HasPrefix(path, "/") {
 		return path

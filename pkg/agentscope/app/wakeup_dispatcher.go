@@ -30,11 +30,16 @@ func (d *WakeupDispatcher) Register(sessionID string) <-chan struct{} {
 }
 
 // Wakeup sends a wakeup signal to a session.
+//
+// The send happens while holding d.mu: Unregister closes the channel under
+// the same mutex, so an unguarded send after releasing the lock could race
+// with close and panic with "send on closed channel" (upstream #2476 class).
+// The send is non-blocking (buffered 1 + default), so holding the lock here
+// cannot stall other sessions.
 func (d *WakeupDispatcher) Wakeup(sessionID string) {
 	d.mu.Lock()
-	ch, ok := d.channels[sessionID]
-	d.mu.Unlock()
-	if ok {
+	defer d.mu.Unlock()
+	if ch, ok := d.channels[sessionID]; ok {
 		select {
 		case ch <- struct{}{}:
 		default:

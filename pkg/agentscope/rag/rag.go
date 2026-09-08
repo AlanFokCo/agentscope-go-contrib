@@ -7,6 +7,12 @@ type Document struct {
 	ID      string
 	Content string
 	Meta    map[string]any
+
+	// Score is the relevance score from the last retrieval or rerank,
+	// normalized so HIGHER means MORE relevant (upstream #2486): backends
+	// reporting distances (e.g. Milvus L2) are negated at the adapter.
+	// Zero when the backend does not report scores (InMemoryIndex).
+	Score float64
 }
 
 // Embedder abstracts a text embedding backend (OpenAI embeddings, local models, etc.).
@@ -35,7 +41,9 @@ func (i *InMemoryIndex) AddDocuments(_ context.Context, docs []Document) error {
 	return nil
 }
 
-// Query currently just returns the first topK documents and does not compute similarity.
+// Query currently just returns the first topK documents and does not compute
+// similarity; Document.Score stays 0 (no embeddings are stored here). Use a
+// text index (e.g. QdrantTextIndex) or a Reranker when scores matter.
 func (i *InMemoryIndex) Query(_ context.Context, _ string, topK int) ([]Document, error) {
 	if topK <= 0 || topK > len(i.docs) {
 		topK = len(i.docs)

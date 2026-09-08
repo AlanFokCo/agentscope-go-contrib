@@ -239,7 +239,8 @@ func (e *ElasticsearchIndex) Query(ctx context.Context, query string, topK int) 
 	var result struct {
 		Hits struct {
 			Hits []struct {
-				ID     string `json:"_id"`
+				ID     string  `json:"_id"`
+				Score  float64 `json:"_score"`
 				Source struct {
 					DocID   string         `json:"doc_id"`
 					Content string         `json:"content"`
@@ -258,6 +259,9 @@ func (e *ElasticsearchIndex) Query(ctx context.Context, query string, topK int) 
 			ID:      hit.Source.DocID,
 			Content: hit.Source.Content,
 			Meta:    hit.Source.Meta,
+			// script_score is cosineSimilarity + 1.0: higher is already
+			// more relevant (upstream #2486 normalization direction).
+			Score: hit.Score,
 		})
 	}
 	return docs, nil

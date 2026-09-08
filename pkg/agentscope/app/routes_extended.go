@@ -288,6 +288,13 @@ func (a *App) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := a.schedulerMgr.Create(r.Context(), req)
 	if err != nil {
+		// Upstream #2442: a rejected schedule is a client error, not a
+		// server failure.
+		var verr *CronValidationError
+		if errors.As(err, &verr) {
+			http.Error(w, verr.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -322,13 +329,35 @@ func (a *App) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if v, ok := patch["input"].(string); ok {
-		record.Input = v
+	// Get returns a copy, so the patch has to be applied through Update or it
+	// is silently dropped: the old code mutated its local copy and answered
+	// 200 with a body the store never saw.
+	updated, ok := a.schedulerMgr.Update(record.ID, func(rec *ScheduleRecord) {
+		if v, ok := patch["input"].(string); ok {
+			rec.Input = v
+		}
+		if v, ok := patch["status"].(string); ok {
+			rec.Status = v
+		}
+	})
+	if !ok {
+		http.Error(w, "schedule not found", http.StatusNotFound)
+		return
 	}
-	if v, ok := patch["status"].(string); ok {
-		record.Status = v
+	// Update refuses a transition that would advertise a schedule which can
+	// never fire again (resuming a stopped chain, or resurrecting a canceled
+	// one). Say so instead of answering 200 with a body that silently
+	// disagrees with the request.
+	if want, isStatusPatch := patch["status"].(string); isStatusPatch && updated.Status != want {
+		// Phrased from the client's point of view: it asked for `want` and
+		// the record stays at its previous status. Printing the pair the
+		// other way round reads like the refused transition was applied.
+		http.Error(w, fmt.Sprintf(
+			"cannot set status to %q: a stopped or canceled schedule cannot be resumed, it stays %q; create a new one",
+			want, updated.Status), http.StatusConflict)
+		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (a *App) handleListScheduleSessions(w http.ResponseWriter, _ *http.Request) {

@@ -90,6 +90,11 @@ func (t *editTool) Execute(ctx context.Context, args map[string]any) (*ToolRespo
 		if err := b.WriteFile(ctx, p, []byte(newContent)); err != nil {
 			return NewErrorResponse(fmt.Errorf("write file: %w", err)), nil
 		}
+		// Upstream #2092: drop any cached copy so the next Read/Edit sees
+		// the new content — the host-side cache cannot stat backend files.
+		if rc := GetReadCache(ctx); rc != nil {
+			rc.Remove(p)
+		}
 		resp := NewTextResponse(fmt.Sprintf("Replaced %d occurrence(s) in %s", count, p))
 		if diff := generateUnifiedDiff(p, oldContent, newContent); diff != "" {
 			resp.Metadata = map[string]any{"diff": diff}

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
 )
 
 // Backend abstracts the execution environment for tool operations, allowing
@@ -159,3 +161,67 @@ func getBackendIfSet(ctx context.Context) (Backend, bool) {
 
 // Compile-time interface check.
 var _ Backend = (*LocalBackend)(nil)
+
+// BackendPermissionContext derives a per-call permission context override
+// when a workspace backend will execute commands: every non-local backend
+// routes into a POSIX environment (Docker/K8s/Bubblewrap/E2B/Daytona/
+// AppleContainer/OpenSandbox), so host-based shell detection must not drive
+// shell-specific permission checks (residual of upstream #2366). Returns nil
+// when no override applies: no backend in ctx, host-local backend, nil base
+// context, or an explicit TargetShell already pinned by configuration.
+func BackendPermissionContext(ctx context.Context, base *permission.Context) *permission.Context {
+	b, ok := getBackendIfSet(ctx)
+	if !ok {
+		return nil
+	}
+	if _, isLocal := b.(*LocalBackend); isLocal {
+		return nil
+	}
+	if base == nil || base.TargetShell != "" {
+		return nil
+	}
+	override := *base
+	override.TargetShell = "posix"
+	return &override
+}
+
+// BackendFileInfo describes a file as seen by the backend's own filesystem.
+type BackendFileInfo struct {
+	ModTime time.Time
+	Size    int64
+}
+
+// BackendStatter is an optional Backend capability. Backends whose files
+// live outside the host filesystem (Docker/K8s/E2B/...) implement it so the
+// read cache can validate freshness against the SAME filesystem that served
+// the read (upstream #2092). Consumers must type-assert; a backend without
+// StatFile simply provides no backend-side freshness data.
+type BackendStatter interface {
+	StatFile(ctx context.Context, path string) (BackendFileInfo, error)
+}
+
+// StatFile implements BackendStatter on the local filesystem.
+func (b *LocalBackend) StatFile(_ context.Context, path string) (BackendFileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return BackendFileInfo{}, err
+	}
+	return BackendFileInfo{ModTime: info.ModTime(), Size: info.Size()}, nil
+}
+
+// backendMtime stats path through the backend when it implements
+// BackendStatter, so cache freshness is judged by the filesystem that served
+// the read (upstream #2092). Returns nil when unavailable, which makes the
+// ReadCache fall back to its host-stat behavior.
+func backendMtime(ctx context.Context, b Backend, p string) *time.Time {
+	st, ok := b.(BackendStatter)
+	if !ok {
+		return nil
+	}
+	info, err := st.StatFile(ctx, p)
+	if err != nil {
+		return nil
+	}
+	mt := info.ModTime
+	return &mt
+}
