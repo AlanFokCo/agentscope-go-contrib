@@ -46,7 +46,11 @@ type StdioConfig struct {
 	ExecutionTimeout int      // per-tool call timeout in seconds; 0 = no timeout
 }
 
-// HttpConfig configures an HTTP/SSE-based MCP connection.
+// HttpConfig configures an HTTP JSON-RPC MCP connection.
+//
+// The transport is plain request/response POST: there is no SSE or
+// streamable-HTTP support. Server-initiated messages and streaming responses are
+// therefore not available over this transport (upstream #2311 is not ported).
 type HttpConfig struct {
 	URL     string
 	Headers map[string]string

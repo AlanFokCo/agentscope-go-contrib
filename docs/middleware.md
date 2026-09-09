@@ -177,13 +177,16 @@ Cross-session memory with 3 modes:
 
 ```go
 store := memory.NewInMemoryStore()
-memMW := memory.New(&memory.Config{
+memMW, err := memory.New(&memory.Config{
     UserID:  "user-123",
     AgentID: "bot",
     Store:   store,
     Mode:    memory.ModeBoth,
     TopK:    5,
 })
+if err != nil {
+    log.Fatal(err) // memory.New returns (*LongTermMemoryMiddleware, error)
+}
 a := agent.NewUnifiedAgent("bot", "...", cm,
     agent.WithMiddlewares(memMW),
 )
@@ -222,8 +225,13 @@ calls can exceed the threshold. Missing usage or prices leave costs unaccounted.
 Exchange rates convert tracked totals for display, not billing enforcement.
 
 ```go
+// middleware.ModelPrice: USD per million tokens.
+prices := map[string]middleware.ModelPrice{
+    "qwen-plus": {InputPerMillion: 0.4, OutputPerMillion: 1.2},
+}
+
 ct := middleware.NewCostTrackerMiddleware(
-    prices,                              // map[string]middleware.ModelPrice
+    prices,
     middleware.WithMaxCostUSD(5.0),
     middleware.WithExchangeRate("CNY", 7.2),
 )
@@ -231,16 +239,20 @@ ct := middleware.NewCostTrackerMiddleware(
 
 ### RepetitionBreakerMiddleware
 
-Detects identical successful tool-call spins (name + input hash; failed
-calls reset the streak). At the threshold a change-strategy reminder is
-injected into the system prompt; past it the typed `ErrToolRepetition`
-replaces the tool result (the call itself still executes — side effects
-cannot be un-run). Streaks are keyed per reply. Allowlist exempts
-read-only/idempotent tools.
+Tracks two independent per-reply dimensions: identical successes spinning
+(name + input hash) and identical failures repeating. At each threshold a
+change-strategy reminder is injected into the system prompt, and the call after
+the threshold is aborted with the typed `ErrToolRepetition`, which replaces the
+tool result. The over-threshold call itself still executes, since middleware
+cannot un-run side effects; only its result is discarded. A success resets the
+error streak and vice versa. Streaks are keyed per reply, so concurrent replies on
+one agent do not reset each other. The allowlist exempts read-only and idempotent
+tools. See [error streaks](#repetition-breaker-error-streaks-upstream-1816) below.
 
 ```go
 rb := middleware.NewRepetitionBreaker(
-    middleware.WithRepetitionThreshold(3),
+    middleware.WithRepetitionThreshold(3),      // success spins  (default 3)
+    middleware.WithRepetitionErrorThreshold(3), // error streaks  (default 3)
     middleware.WithRepetitionAllowlist("read_file", "grep"),
 )
 ```
@@ -268,7 +280,15 @@ exporting to metrics.
 
 ```go
 ledger := middleware.NewCostLedger()
-track := middleware.NewCostTracking(ledger, "sess-1", "bot", prices)
+// NewCostTracking takes map[string]model.Price, the pricing-overlay type, whose
+// fields are Input/Output/CacheRead/CacheWrite. That is not the
+// map[string]middleware.ModelPrice used by NewCostTrackerMiddleware above, whose
+// fields are InputPerMillion/OutputPerMillion/..., and the compiler rejects one
+// for the other. Unifying the two is tracked as open work in STABILITY.md.
+modelPrices := map[string]model.Price{
+    "qwen-plus": {Input: 0.4, Output: 1.2},
+}
+track := middleware.NewCostTracking(ledger, "sess-1", "bot", modelPrices)
 // ...
 sum := ledger.Summary(middleware.CostFilter{SessionID: "sess-1"})
 ```
@@ -292,9 +312,14 @@ reply as JSONL — the input for `replay.ParseRunLog` / `replay.DiffRunLogs`
 and `examples/replayview`. Optional redaction hook.
 
 ```go
-runlog := middleware.NewRunJSONL(os.Stdout,
-    middleware.WithRunLogRedactor(func(s string) string { return s }),
-)
+runlog := middleware.NewRunJSONL(os.Stdout) // takes only an io.Writer
+
+// The redactor is applied after construction: WithRunLogRedactor returns a
+// func(*RunJSONL) and is not a constructor option. RunJSONL serializes prompts
+// and tool payloads verbatim, so without a redactor secrets land in the run log.
+middleware.WithRunLogRedactor(func(s string) string {
+    return strings.ReplaceAll(s, "sk-", "sk-***")
+})(runlog)
 ```
 
 ### StreamValidator
@@ -371,11 +396,7 @@ MW1.OnReply ←
 
 `OnSystemPrompt` is the exception — it runs as a pipeline (each middleware transforms the output of the previous one, not an onion).
 
-## See Also
-
-- [Architecture](architecture.md) — Middleware in the broader system design
-- [Go Runtime Features](go-exclusive.md) — Replay middleware for CI/CD
-- [Tools](tools.md) — Tool-level middleware
+## Upstream sync notes (2026-09)
 
 ### Repetition breaker: error streaks (upstream #1816)
 
@@ -384,9 +405,9 @@ MW1.OnReply ←
 - **Success spins** (existing): identical successful calls past
   `WithRepetitionThreshold` inject the strategy-change hint; the next
   identical call aborts with `ErrToolRepetition`.
-- **Error streaks** (new): the same call *failing* — handler error or
-  error-state tool response — past `WithRepetitionErrorThreshold` (default 3)
-  injects `WithRepetitionErrorHint`; the next identical failure aborts.
+- **Error streaks** (new): the same call failing, either with a handler error or
+  an error-state tool response, past `WithRepetitionErrorThreshold` (default 3)
+  injects `WithRepetitionErrorHint`, and the next identical failure aborts.
   A success resets the error streak and vice versa.
 
 ### Tracing finish reasons (upstream #2450)
@@ -399,10 +420,15 @@ shapes stay distinguishable:
 | ---------------------------------------------------- | ------------- |
 | context canceled                                     | `interrupted` |
 | handler / transport error (`err != nil`)             | `error`       |
-| partial reply reported on `ChatResponse.Error` (#2350) | `incomplete`  |
+| partial reply reported on `ChatResponse.Error` (#2350) | `incomplete` |
 | otherwise                                            | the real `StopReason` (`stop`/`length`/`tool_calls`/`content_filter`), or `stop` when unset |
 
-The value is marshaled with `encoding/json`, not concatenated: a provider
-`StopReason` containing a quote or backslash used to produce an invalid JSON
-attribute. Nil responses keep the established contract of no supplementary
-span.
+The value is marshaled with `encoding/json` rather than concatenated, because a
+provider `StopReason` containing a quote or backslash produced an invalid JSON
+attribute. Nil responses keep the established contract of no supplementary span.
+
+## See Also
+
+- [Architecture](architecture.md) — Middleware in the broader system design
+- [Go Runtime Features](go-exclusive.md) — Replay middleware for CI/CD
+- [Tools](tools.md) — Tool-level middleware

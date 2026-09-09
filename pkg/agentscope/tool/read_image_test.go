@@ -119,9 +119,10 @@ func TestReadToolTextUnaffected(t *testing.T) {
 	}
 }
 
-// A large image must not be inlined: base64 costs roughly its own size in
-// estimated tokens, so one screenshot could blow the context window and force
-// an immediate compression. It is reported as text instead.
+// A large image must not be inlined: the token estimator decodes base64 back to
+// raw bytes and divides by four, so an inlined image costs roughly fileSize/4
+// tokens, and one screenshot could exhaust the context window and force an
+// immediate compression. It is reported as text instead.
 func TestReadToolOversizeImageFallsBackToText(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "huge.png")

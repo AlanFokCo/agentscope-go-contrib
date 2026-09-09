@@ -192,6 +192,7 @@ resp, _ := cm.Chat(ctx, msgs,
     model.WithReasoningEffort("high"),
     model.WithVoice("alloy"),
     model.WithRetries(3, time.Second),
+    model.WithSeed(42), // passed through on OpenAI-family providers
 )
 ```
 
@@ -211,6 +212,13 @@ Force any model to produce JSON matching a schema:
 result, _ := model.GenerateStructuredOutput(ctx, cm, msgs, jsonSchema)
 ```
 
+Use `model.GenerateStructuredOutputWithUsage` when the call's tokens must land in
+a budget or a cost ledger. It returns `(json.RawMessage, *ChatUsage, error)` and
+accumulates usage across strategy attempts such as retries and fallbacks, instead
+of reporting only the last one. Agent-driven compression uses it, and the reply
+loop re-emits the total as a `model_call_end` event so budgets and cost tracking
+include compression spend.
+
 ## Model Cards
 
 Query bundled model metadata:
@@ -229,12 +237,16 @@ models = model.ListModels("openai")   // filter by provider
 
 | Provider | Chat Models | Embedding Models | TTS Models |
 |----------|------------|------------------|------------|
-| OpenAI | 10 | 2 | 2 |
-| Anthropic | 7 | — | — |
-| DashScope | 9 (incl. GLM-5.2) | 2 | 6 |
+| OpenAI | 13 | 2 | 2 |
+| Anthropic | 10 | — | — |
+| DashScope | 15 (incl. GLM-5.2) | 2 | 6 |
 | DeepSeek | 4 | — | — |
-| Gemini | 4 | 2 | 1 |
-| Moonshot | 6 (incl. Kimi K3) | — | — |
+| Gemini | 9 | 2 | 1 |
+| Moonshot | 8 (incl. Kimi K3) | — | — |
 | Ollama | 4 | — | — |
-| xAI | 4 | — | — |
-| **Total** | **48** | **6** | **9** |
+| xAI | 9 | — | — |
+| **Total** | **72** | **6** | **9** |
+
+72 chat + 6 embedding = the 78 bundled cards under `pkg/agentscope/model/models/`.
+The 9 TTS cards are a separate embed under `pkg/agentscope/tts/models/`. Verify
+with `find pkg/agentscope/model/models -name '*.yaml' | wc -l`.

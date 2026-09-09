@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Handoff guide for coding agents (and humans) working on **agentscope-go**. Read this first, then `CLAUDE.md` for the full architecture and `STABILITY.md` for what's shipped vs. open.
+Handoff guide for coding agents (and humans) working on **agentscope-go**. Read this first, then `CLAUDE.md` for the full architecture and `STABILITY.md` for what's shipped vs. open. `CLAUDE.md` is tracked and published; the `.gitignore` entry that used to list it had no effect on a tracked file and has been removed.
 
 ## What this is
 
@@ -9,7 +9,7 @@ A Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope
 - **Module path: `github.com/alanfokco/agentscope-go/v2`** (v2+ line). Imports use `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...`. Latest tag: **`v2.0.9`**.
 - Library under `pkg/agentscope/`; runnable demos under `examples/`.
 - `go.mod` says `go 1.25.0` — keep code **Go 1.25+ compatible** (the minimum version declared in `go.mod`).
-- Python reference (for design parity) at `/Users/alanfokco/Github/agentscope/`.
+- Python reference (for design parity): the upstream repo, <https://github.com/agentscope-ai/agentscope>. The maintainer's machine keeps a checkout next to this one (`../agentscope`); do not rely on an absolute path.
 
 ## Build / test / lint
 
@@ -25,7 +25,13 @@ CI (`.github/workflows/ci.yml`) is a 3-OS matrix — **ubuntu / macos / windows*
 - shell-specific Unix tests guard with `if runtime.GOOS == "windows" { t.Skip("requires Unix shell") }`;
 - sandbox/workspace-relative paths use the `path` package (forward slash), **not** `filepath` (which is `\` on Windows).
 
-## Commit / deploy workflow (READ THIS — it's non-obvious)
+## Commit / deploy workflow (maintainer-local; read the scope first)
+
+> Scope: this section describes the maintainer's own setup, where the git remote
+> lives on a private build host reachable as `ssh root@builder`. It does not apply
+> to contributors; see [CONTRIBUTING.md](CONTRIBUTING.md) for the fork-and-PR
+> flow. If `ssh root@builder` does not resolve for you, ignore this section and
+> commit normally. The Quality Gate section below applies to everyone.
 
 Git lives on **builder** (`root@builder:/opt/Projects/agentscope-go`), not in the local checkout. Never `git commit`/`push` locally.
 
@@ -93,7 +99,6 @@ Recent additions (2026-09, sync batch 2) — **Python 8/14–9/7 window port** (
 - **RAG:** `Document.Score` normalized higher-is-better across ES/Qdrant/MongoDB/Milvus (#2486), `LLMReranker` over any ChatModel with score cache (#1975), explicit `ChunkConfig.Unit`/`Validate()` (#2083 core).
 - **Features:** `compress_context` agent-driven compression tool (#2143), native multimodal tool outputs for the Responses API (#2389).
 - **Not ported (documented):** GoalPipeline (#2428), team enhancements (#2386/#2379), full A2AAgent protocol (#2142, needs SDK decision), workspace prewarm pool (#1755, needs isolation-policy/storage/lifecycle prerequisites), channel/app Phase E items, MCP SSE transport (#2311, capability gap — needs its own project).
-- **Post-review fixes (adversarial review of this batch, before commit):** cron `next()` rebuilt on `time.Date` local calendar fields instead of `time.Truncate` (Truncate aligns to UTC boundaries and broke EVERY expression in non-hour-offset zones such as +5:30/+3:30/+9:30), plus a monotonic step guard so a DST fall-back cannot spin, and a 5-year scan so `0 0 29 2 *` is accepted; scheduler re-arm/cancel serialized on a per-record lock with a re-arm sequence number, records published before `Schedule`, `Get`/`List` return copies, fired tasks dropped via the new optional `schedule.TaskRemover`; Read images now carry a text placeholder AND survive the agent pipeline (`ToolResultBlock.Output` becomes a block list) with a `tool.MaxInlineImageBytes` cap; Responses streaming emits reasoning before text (replay follows block order) and keeps tool-call order; `compress_context` reports honestly via `tool.CompressFunc`/`CompressionResult`, compresses at a lower `AgentDrivenTriggerRatio`, is not concurrency-safe, needs no confirmation, and never summarizes an unfinished tool call; forced finalization drops tool calls a provider returned despite `tool_choice: none`; Anthropic mid-stream `error` events and truncated Responses streams surface `ChatResponse.Error`, which the reply loop now logs and emits as `model_partial_response`; tracing finish reasons split into `interrupted`/`error`/`incomplete` and are JSON-marshaled; `ReadCache` returns copies; `limitContextImages` and `jsonx` coercion are copy-on-write; `ToolBackend.StatFile` jail-checks its path. Root-level example binaries and internal planning docs are now gitignored.
 
 ## Conventions (summary; full list in CLAUDE.md)
 

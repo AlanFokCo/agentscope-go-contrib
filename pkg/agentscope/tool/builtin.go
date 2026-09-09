@@ -17,11 +17,11 @@ const (
 	DefaultShellTimeout = 30
 
 	// MaxInlineImageBytes caps images that Read returns as base64 DataBlocks.
-	// Base64 inflates bytes by ~4/3 and the token estimator divides by 4, so
-	// an inlined image costs roughly its own file size in tokens: 256KB is
-	// about 64k tokens, already a large fraction of a context window. Bigger
-	// images are reported as text (name, media type, size) instead of being
-	// silently dropped or blowing the budget.
+	// The token estimator decodes base64 back to raw bytes (len*3/4) and then
+	// divides the total by 4, so an inlined image costs roughly fileSize/4
+	// tokens: 256KB is about 64k tokens, already a large fraction of a context
+	// window. Bigger images are reported as text (name, media type, size)
+	// instead of being dropped without notice or blowing the budget.
 	MaxInlineImageBytes = 256 * 1024
 )
 

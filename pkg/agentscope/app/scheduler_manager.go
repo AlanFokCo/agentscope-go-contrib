@@ -132,7 +132,14 @@ func (m *SchedulerManager) Create(ctx context.Context, req CreateScheduleRequest
 				Reason: fmt.Sprintf("expression never fires within the next %d years", cronScanYears),
 			}
 		}
-		cron = parsed
+		// RunOnce asks for a single fire at the next matching slot. The
+		// expression is still validated, since a malformed one is a client error
+		// whether or not it repeats, but cron stays nil so the callback does not
+		// re-arm. CreateScheduleRequest.RunOnce was previously accepted by the
+		// API and read by nothing.
+		if !req.RunOnce {
+			cron = parsed
+		}
 		task.RunAt = mustNextFire(parsed, time.Now())
 	} else {
 		task.RunAt = time.Now().Add(time.Second)
@@ -167,6 +174,18 @@ func (m *SchedulerManager) Create(ctx context.Context, req CreateScheduleRequest
 				Warn("scheduled chat failed")
 		}
 		if cron == nil {
+			// A RunOnce schedule (or one with no cron expression) fires once and
+			// never re-arms. After that fire, mark the record terminal so Get and
+			// List stop reporting a spent one-shot as "active", and drop the dead
+			// task. The active-and-not-canceled gate matches the re-arm path below:
+			// a cancel is sticky and wins, and a status the caller already moved off
+			// "active" is left alone.
+			entry.mu.Lock()
+			if !entry.canceled && entry.rec.Status == "active" {
+				entry.rec.Status = "completed"
+			}
+			entry.mu.Unlock()
+			m.forgetTask(t.ID)
 			return chatErr
 		}
 

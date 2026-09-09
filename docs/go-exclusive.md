@@ -108,9 +108,35 @@ import (
     "sync"
 
     "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
     "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
     "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/runtime"
 )
+
+// poolAgent adapts *agent.UnifiedAgent to the agent.Agent interface that
+// runtime.AgentFactory requires.
+type poolAgent struct{ a *agent.UnifiedAgent }
+
+func (w poolAgent) ID() string { return w.a.Name() }
+
+func (w poolAgent) Reply(ctx context.Context, args ...any) (*message.Msg, error) {
+    // AgentPool.Submit enqueues a single string. Guard the index so a caller
+    // that passes nothing degrades to an empty prompt instead of panicking.
+    var input string
+    if len(args) > 0 {
+        input, _ = args[0].(string)
+    }
+    return w.a.Reply(ctx, input)
+}
+
+func (w poolAgent) Observe(ctx context.Context, msgs []*message.Msg) error {
+    return w.a.Observe(ctx, msgs)
+}
+
+func (w poolAgent) Interrupt(context.Context, *message.Msg) error { return nil }
+func (w poolAgent) SetConsoleOutputEnabled(bool)                  {}
+
+var _ agent.Agent = poolAgent{}
 
 func main() {
     cm, _ := model.NewDashScopeChatModel(model.DashScopeConfig{
@@ -118,10 +144,12 @@ func main() {
         Model:  "qwen-plus",
     })
 
-    // Create a pool with 8 worker goroutines
+    // AgentPool's factory must return agent.Agent, which *agent.UnifiedAgent
+    // does not implement (it lacks ID/Interrupt/SetConsoleOutputEnabled and its
+    // Reply takes a string, not variadic args). Adapt it; see poolAgent below.
     pool := runtime.NewAgentPool(
         func() agent.Agent {
-            return agent.NewUnifiedAgent("classifier", "Classify the sentiment.", cm)
+            return poolAgent{a: agent.NewUnifiedAgent("classifier", "Classify the sentiment.", cm)}
         },
         runtime.Workers(8),
         runtime.QueueSize(100),
@@ -130,19 +158,27 @@ func main() {
     ctx := context.Background()
     defer pool.Close()
 
-    // Fan out 100 classification tasks
+    // Fan out the classification tasks.
     inputs := []string{"Great product!", "Terrible service.", "It's okay I guess."}
 
     var wg sync.WaitGroup
     for _, input := range inputs {
         wg.Add(1)
-        resultCh, _ := pool.Submit(ctx, input)
+        resultCh, err := pool.Submit(ctx, input)
+        if err != nil {
+            wg.Done()
+            fmt.Printf("submit failed: %v\n", err)
+            continue
+        }
         go func(ch <-chan runtime.PoolResult) {
             defer wg.Done()
             res := <-ch
-            if res.Err == nil {
-                fmt.Printf("[%s] → %s (took %v)\n",
-                    res.Input, *res.Output.GetTextContent("\n"), res.Duration)
+            if res.Err != nil || res.Output == nil {
+                return
+            }
+            // GetTextContent returns *string: dereference and nil-check it.
+            if txt := res.Output.GetTextContent("\n"); txt != nil {
+                fmt.Printf("[%s] -> %s (took %v)\n", res.Input, *txt, res.Duration)
             }
         }(resultCh)
     }
@@ -395,6 +431,33 @@ func main() {
 - **Ramp-up**: Gradually increase concurrency over `RampUpDuration`
 - **Setup/Teardown**: Optional hooks for test fixture management
 - **Concurrent-safe**: Atomic counters, no shared mutable state
+
+### Regression baselines
+
+`bench.Battery` runs named scenarios together, and `CheckBaseline` compares the
+result against a saved baseline (p95 latency with fractional-millisecond
+precision and 10% slack, plus success rate as an exact floor), returning one string per
+regression, so a performance gate is a few lines in a normal Go test:
+
+```go
+reports, err := bench.RunBattery(ctx, bench.Battery{
+    {Name: "simple-qa", Scenario: scenario},
+})
+if err != nil {
+    t.Fatal(err)
+}
+
+base, err := bench.LoadBaseline("testdata/bench-baseline.json")
+if err != nil {
+    t.Skipf("no baseline recorded yet: %v", err)
+}
+for _, msg := range bench.CheckBaseline(reports, base) {
+    t.Errorf("perf regression: %s", msg)
+}
+
+// Refresh only on purpose, never automatically:
+//   bench.SaveBaseline(path, bench.BaselineFromReports(reports))
+```
 
 ---
 

@@ -80,22 +80,45 @@ if _, err := replayed.Reply(ctx, "plan a trip to Tokyo"); err != nil { log.Fatal
 
 ### Fan-out Agent Pool (`runtime/`)
 
-Process N concurrent sessions with bounded worker goroutines and backpressure. Each worker owns its own agent instance. Dependencies captured by the factory, such as a model or toolkit, remain shared unless the factory creates separate instances.
+Process N concurrent sessions with bounded worker goroutines and backpressure.
+
+`runtime.NewPool` is the handler-based pool and the one `examples/agent_pool`
+uses; each request carries its own result channel and the pool stops with
+`Shutdown(ctx)`:
 
 ```go
-pool := runtime.NewAgentPool(
-    func() agent.Agent {
-        return agent.NewUnifiedAgent("worker", "...", cm, agent.WithToolkit(tk))
+pool := runtime.NewPool(
+    runtime.PoolConfig{MaxWorkers: 8, QueueSize: 100, WorkerTimeout: 10 * time.Second},
+    func(ctx context.Context, req *runtime.Request) *runtime.Result {
+        out, err := a.Reply(ctx, req.Input)
+        if err != nil {
+            return &runtime.Result{RequestID: req.ID, Error: err}
+        }
+        text := ""
+        if txt := out.GetTextContent("\n"); txt != nil { // GetTextContent returns *string
+            text = *txt
+        }
+        return &runtime.Result{RequestID: req.ID, Output: text}
     },
-    runtime.Workers(16),
-    runtime.QueueSize(256),
 )
-defer pool.Close()
 
-resultCh, _ := pool.Submit(ctx, "Summarize this document...")
-result := <-resultCh
-fmt.Println(result.Output.GetTextContent("\n"))
+resultCh := make(chan *runtime.Result, 1)
+if err := pool.Submit(&runtime.Request{ID: "req-001", Input: "Summarize this document...",
+    Ctx: ctx, ResultCh: resultCh}); err != nil {
+    log.Fatal(err) // runtime.ErrPoolFull when the queue is at capacity
+}
+res := <-resultCh
+log.Println(res.RequestID, res.Output)
+if err := pool.Shutdown(ctx); err != nil { log.Fatal(err) }
 ```
+
+There is also `runtime.NewAgentPool(factory, runtime.Workers(n),
+runtime.QueueSize(n))`, which gives each worker its own agent instance. Its
+factory must return the `agent.Agent` interface (`ID`, `Reply(ctx, ...any)`,
+`Observe`, `Interrupt`, `SetConsoleOutputEnabled`). `*agent.UnifiedAgent` does not
+implement that interface, so it needs an adapter. See
+[docs/deployment.md](docs/deployment.md#agent-pool-high-throughput-deployment) and
+[docs/go-exclusive.md](docs/go-exclusive.md) for the adapter and a full program.
 
 ### Hot-Reload Config (`hotreload/`)
 
@@ -305,7 +328,7 @@ Onion-chain architecture — each hook wraps the next in the chain:
 | `OnCompressContext` | Wraps context compression |
 | `OnCheckPermission` | Available permission wrapper; requires explicit `BuildCheckPermissionChain` integration |
 
-Built-in middleware: TracingMiddleware, TTSMiddleware, ReplyBudgetControlMiddleware, LongTermMemoryMiddleware, CostTrackerMiddleware, MetricsMiddleware.
+Built-in middleware: Tracing, TTS, ReplyBudgetControl, LongTermMemory, AgenticMemory, CostTracker, CostLedger/CostTracking, ReplyCostBudget, Metrics, Guardrail, RepetitionBreaker, ReplyWatchdog, RunJSONL, StreamValidator, Replay — see [docs/middleware.md](docs/middleware.md).
 
 ### 3 TTS Providers
 
@@ -319,7 +342,7 @@ Built-in middleware: TracingMiddleware, TTSMiddleware, ReplyBudgetControlMiddlew
 
 Production-ready coding agent toolkit:
 
-- **Bash / Read / Write / Edit / Glob / Grep** — Full filesystem + shell with AST-level injection detection, dangerous path protection, read-only command recognition
+- **Bash / Read / Write / Edit / Glob / Grep** — Full filesystem + shell with AST-level injection detection, dangerous path protection, read-only command recognition. `Read` returns images (png/jpg/jpeg/gif/webp/bmp/tiff/tif/ico, up to 256 KB) as image blocks a multimodal model can see, plus a text placeholder so a text-only model gets a description instead of an empty result
 - **Task Management** — `task_create`, `task_get`, `task_list`, `task_update` with bidirectional dependency tracking
 - **Structured Output** — `GenerateStructuredOutput` forces JSON Schema-compliant responses via synthetic tool calls with automatic retry
 - **Long-term Memory** — Cross-session memory middleware with 3 modes (static, agent-controlled, both), backed by vector similarity search, mem0 REST API, or a JSON Lines `FileStore`; `AgenticMemoryMiddleware` adds file-based memory (workspace `MEMORY.md` with a token-budgeted snapshot injected into the system prompt)
@@ -335,7 +358,7 @@ Production-ready coding agent toolkit:
 ### Security & Execution Safety
 
 - **AST-level Bash Analysis** — `mvdan.cc/sh/v3/syntax`-based analysis: injection risk, dangerous removal, redirect safety, read-only verification, sed constraints, file path extraction
-- **Interpreter Attack Detection** — Blocks dangerous API calls hidden inside `python -c`, `node -e`, `perl -e`, `ruby -e`, `lua -e`, `php -r` (8 languages, 20+ patterns)
+- **Interpreter Attack Detection** — Blocks dangerous API calls hidden inside `python -c`, `node -e`, `perl -e`, `ruby -e`, `lua -e`, `php -r` (6 languages across 8 interpreter binary names; 27 dangerous-API patterns, of which Lua and PHP match only the 3 language-agnostic ones)
 - **Process-group Cleanup** — On Unix, timeout cleanup signals the command's process group. This reduces orphaned children; it does not enforce a process-count limit.
 - **Sandbox Policy Checks** — Selected built-in tool names and inputs are checked. This is not a complete security boundary; custom tools, aliases, and shell/network/resource restrictions need backend enforcement. See [current limits](docs/adversarial-hardening.md).
 - **Write Hardening** — The local Write tool has a 10 MB input cap, atomic replacement, and executable-extension bypass-immune ASK. Other file tools and backend paths have different persistence behavior.
@@ -349,7 +372,7 @@ Production-ready coding agent toolkit:
 
 | Protocol | Description |
 |----------|-------------|
-| **MCP** | Full MCP client (Stdio + HTTP/SSE) with automatic tool discovery |
+| **MCP** | MCP client over Stdio and HTTP JSON-RPC, with automatic tool discovery. There is no SSE/streamable-HTTP transport (see STABILITY.md → *Deliberately not ported*) |
 | **A2A HTTP** | Agent-to-Agent over HTTP via `A2AAgent` + `HTTPClient` |
 | **A2A TCP** | Newline-delimited JSON transport; the `a2a/grpc` package does not implement the gRPC wire protocol |
 | **AG-UI** | Agent service protocol for frontend integration |
@@ -486,7 +509,7 @@ a := agent.NewUnifiedAgent("bot", "...", cm,
 pkg/agentscope/
 ├── agent/                  # Agent interface + UnifiedAgent, UserAgent, A2AAgent
 ├── model/                  # ChatModel interface + 9 providers + 78 model cards + price overlay
-├── tool/                   # Tool interface + FunctionTool + 19 built-in tools + safety analysis
+├── tool/                   # Tool interface + FunctionTool + 24 built-in tools + safety analysis
 ├── message/                # Msg + ContentBlock (text, thinking, tool_call, tool_result, data, hint)
 ├── event/                  # 30 event types for streaming lifecycle
 ├── middleware/             # 7-hook onion chain + tracing, TTS, budget, memory, metrics, cost, guardrail
@@ -560,7 +583,7 @@ pkg/agentscope/
 | `agent_v2` | UnifiedAgent with native API tool calling |
 | `streaming` | Real-time streaming via `ReplyStream` + event channel |
 | `react_tool` | UnifiedAgent with custom FunctionTool |
-| `react_builtin_tools` | UnifiedAgent with enhanced built-in toolkit (bash, read, write, edit, glob, grep) |
+| `react_builtin_tools` | UnifiedAgent with the enhanced built-in toolkit (bash, read, write, edit, multiedit, applypatch, glob, grep) |
 | `console` | Interactive terminal chat with an agent (streamed rendering + tool-call confirmation) |
 | `dingtalk_channel` | Connect an agent to DingTalk (Stream SDK inbound, webhook replies, text-mode confirmations) |
 | **Model API** | |

@@ -25,6 +25,25 @@ import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
   console/channel frontends, and the Phase 3 hub/skill/memory additions.
 - **Internal** (`internal/...`): no compatibility guarantee; do not import.
 
+Packages not listed above are unclassified. Treat them as Experimental until
+they are graded. As of v2.0.9 that includes
+`workspace`, `schedule`, `rag`, `rag/parser`, `middleware`, `storage`, `mcp`, `embedding`,
+`audit`, `device`, `metrics`, `replay`, `bench`, `wasm`, `hotreload`, `a2a`,
+`messagebus`, `pipeline`, `session`, `prompt`, `team`, `webui`, `access`,
+`resilience` and `tracing`. The 2026-09 sync batch added exported API to five of
+them: `workspace.ExecPathResolver`, `schedule.TaskRemover`, `rag.Document.Score`
+and `rag.NewLLMReranker`, `rag/parser` `Unit` plus `Validate`, and `middleware`
+`WithRepetitionErrorThreshold` plus `WithRepetitionErrorHint`.
+
+Stable means source-compatible for documented usage. It does not mean
+value-compatible. Two Stable-tier contracts changed behavior in the 2026-09 sync
+batch without changing a signature, so neither breaks compilation; both are
+recorded as `BREAKING (behavior)` in `CHANGELOG.md`.
+`message.ToolResultBlock.Output` may now hold a `[]message.ContentBlock`, so read
+it with `GetOutputText()` or a comma-ok assertion, since a bare `.(string)`
+panics on an image tool result. `tool.ReadCache.Get*` return copies, so mutating
+the returned entry no longer affects the cache.
+
 ## Error handling
 
 Errors are structured `*errors.AgentError` (category + code + retryable +
@@ -74,8 +93,10 @@ Landed:
   (`Setpgid`); timeout kills that group, reducing orphaned children. This is not a
   process-count limit, and Windows does not use this process-group mechanism.
 - **Interpreter attack detection:** `CheckInterpreterAttack` detects dangerous
-  API calls hidden inside `python -c`, `node -e`, `perl -e`, etc. (8 languages,
-  20+ dangerous API patterns).
+  API calls hidden inside `python -c`, `node -e`, `perl -e` and similar. Eight
+  interpreter binary names cover six languages (`python`, `python2` and `python3`
+  count once). There are 27 dangerous-API patterns; Lua and PHP match only the
+  three language-agnostic ones.
 - **Sandbox policy checks:** the orchestrator applies selected name-based checks
   for built-in tools. These checks are not a complete isolation boundary:
   custom tools, alternate call-name casing, shell/network behavior, and resource
@@ -92,8 +113,10 @@ Landed:
   via circuit breaker), PubSub interface + MQTT adapter (build tag: mqtt),
   Device framework (Serial/GPIO/CAN/I2C pure-Go drivers + DeviceTool + Watchdog +
   SensorMiddleware), cross-arch CI (arm64/arm/mips64le/riscv64), binary ~6MB.
-Upstream sync batch (2026-09, Python 8/14–9/7 window; see commit bodies for
-per-PR mapping):
+
+### Upstream sync batch (2026-09, Python 8/14–9/7 window)
+
+Per-PR mapping is in the commit bodies.
 
 - **Scheduler correctness (#2442):** `POST /api/schedule` validates cron
   expressions before persistence (standard five-field cron with steps/ranges/
@@ -126,12 +149,26 @@ per-PR mapping):
     that fires synchronously cannot degrade a cron to a one-shot, and a fired
     task is dropped through the optional `schedule.TaskRemover` so a
     per-minute chain does not accumulate one dead entry per fire.
-  - Because `Get` returns a copy, `PATCH /api/schedule/{id}` goes through
+  - Because `Get`/`List` return copies, `PATCH /api/schedule/{id}` goes through
     `SchedulerManager.Update`, which mutates under the entry lock. Patching the
     returned copy used to answer 200 with a body the store never saw, and
     silently lost the ability to pause a chain via `{"status":"paused"}` (the
-    re-arm callback reads that field). A canceled schedule cannot be resurrected
-    through `Update`.
+    re-arm callback reads that field).
+  - Status is one-way. Pausing, completing, failing or blanking the status stops
+    the re-arm chain, and `Update` refuses to set `active` again from any
+    non-active status, including an empty one, so two PATCH calls cannot reopen
+    the path. Only a record that is currently active has an armed task behind it.
+    The route answers 409 with the reason rather than 200 with a body that
+    disagrees with the store. Resuming means creating a new schedule.
+  - `CreateScheduleRequest.RunOnce` is honored: the expression is still
+    validated, but the schedule fires once at the next matching slot and does
+    not re-arm; after that fire the record reports `completed` and its task
+    entry is dropped. It was previously accepted by the API and read by nothing.
+  - The status field is not validated against a vocabulary, so
+    `PATCH {"status":"canceled"}` marks the record canceled without canceling the
+    armed task, and the next fire still runs one chat before the chain stops. Use
+    `DELETE /api/schedule/{id}`, which calls `Cancel`, to stop a schedule.
+    Restricting the field to `{active, paused}` is tracked as follow-up work.
 - **Concurrency (#2476):** `WakeupDispatcher.Wakeup` sends under the registry
   lock, closing a send-on-closed-channel race with `Unregister`.
 - **Provider accounting (#2461):** xAI output usage adds
@@ -230,9 +267,10 @@ per-PR mapping):
     `model_input_types` capability probe yet (upstream has one), so Read
     cannot refuse images for a model that cannot see them.
   - Images above `tool.MaxInlineImageBytes` (256 KB) are reported as text
-    instead of inlined: base64 costs roughly its own size in estimated
-    tokens, so one 1 MB screenshot would consume ~250k tokens and trigger an
-    immediate compression. Token counting now includes images carried inside
+    instead of inlined. The token estimator decodes base64 back to raw bytes
+    (`len*3/4`) and divides the total by four, so an inlined image costs roughly
+    `fileSize/4` tokens: 256 KB is ~64k, and a 1 MB screenshot would be ~250k and
+    trigger an immediate compression. Token counting now includes images carried inside
     a tool result.
   - The image is also emitted as a `tool_result_data_delta` event between the
     text delta and `tool_result_end`, so a consumer that rebuilds a message
@@ -243,7 +281,8 @@ per-PR mapping):
     `ToolResultBlock.Output` either way.
   - Event payloads are capped at `agent.maxEventInlineDataBytes`, measured on
     the BASE64 form: 64 KB of base64 is roughly 48 KB of raw image, since
-    base64 inflates by 4/3, so a typical 800x600 screenshot exceeds it. Above
+    base64 inflates by 4/3. An 800x600 capture of dense text or a photograph
+    exceeds that easily, while a flat-colour UI capture may not. Above
     the cap the event is dropped with a debug log and the image still reaches
     the model through `ToolResultBlock.Output`. The cap exists because
     event volume is NOT bounded elsewhere: `middleware.NewRunJSONL` serializes
@@ -257,18 +296,6 @@ per-PR mapping):
     they could not have rendered anyway. If a future consumer genuinely needs
     the pixels, move the bound to the recorder/run-log side rather than raising
     this constant.
-  - A schedule's `PATCH` status transition is one-way: pausing (or completing,
-    or failing, or blanking) stops the re-arm chain, and `SchedulerManager.Update`
-    refuses to set `active` again from any non-active status — including an empty
-    one, so two PATCHes cannot reopen the path. The route answers 409 with the
-    reason rather than 200 with a body that silently disagrees. Resuming means
-    creating a new schedule.
-  - KNOWN GAP: the status field is not validated against a vocabulary, so
-    `PATCH {"status":"canceled"}` marks the record canceled WITHOUT canceling
-    the armed task — the next fire still runs one chat before the chain stops.
-    Use `DELETE /api/schedule/{id}` (which calls `Cancel`) to actually stop a
-    schedule. Tightening the field to an `{active, paused}` vocabulary is
-    tracked as follow-up work.
 - **Argument repair (#2496):** tool-call arguments get schema-guided type
   coercion on every call (`jsonx.RepairWithSchema` / `CoerceToSchema`):
   quoted numbers, stringified booleans, lone values for arrays, stringified
@@ -295,6 +322,12 @@ per-PR mapping):
   `checkNextAction` and run as ghost tool calls.
   As a side effect the `exceed_max_iters` event is no longer emitted on the
   last loop iteration when that iteration finished normally.
+  - The extra call is unconditional and there is no flag to disable it. Every
+    reply that exhausts `ReactConfig.MaxIters` costs one more model call over the
+    full context, which at that point is the longest it will be. It is emitted as
+    `model_call_start` and `model_call_end`, so budget and cost middleware account
+    for it, but a workload that routinely hits `MaxIters` has a higher per-reply
+    cost. Raise `MaxIters` or shorten the context if that matters.
 - **RAG scores (#2486):** `rag.Document.Score` carries retrieval relevance,
   normalized higher-is-better (Milvus L2 negated); ES/Qdrant/MongoDB populate
   it; `RerankedIndex` carries rerank scores onto documents.
@@ -403,7 +436,40 @@ Recently landed (since initial hardening):
   `BubblewrapWorkspace` containment is separator-aware.
   All code batches passed evaluator adversarial review (no HIGH findings).
 
+## Deliberately not ported (2026-09 sync batch)
+
+Upstream PRs triaged in the Python 8/14–9/7 window and intentionally skipped.
+Each entry states the blocker, not a priority.
+
+| Upstream | Item | Why it is not here |
+|---|---|---|
+| #2428 | GoalPipeline | No Go goal/objective layer to hang it on; it would be a new subsystem, not a port |
+| #2386 / #2379 | team enhancements | `team/` is leader/worker only; the enhancements assume Python's team event model |
+| #2142 | full A2AAgent protocol | Needs an SDK decision first: hand-rolled types in `a2a/` versus depending on an A2A Go SDK |
+| #1755 | workspace prewarm pool | Prerequisites missing: isolation policy, and a workspace storage/lifecycle contract |
+| #2311 | MCP SSE transport | `mcp.HttpClient` is request/response JSON-RPC only (`mcp/http.go`). An SSE or streamable-HTTP transport is a separate project |
+| n/a | channel and app Phase E items | Frontend work, tracked separately |
+
+Mid-stream failover is also absent: `FallbackChatModel` fails over on stream
+setup errors only, so a truncated stream is reported (#2350) and not retried.
+
+Nothing wires model capabilities into the tool layer, so `Read` cannot decline to
+return an image to a model that cannot see it. The card data exists
+(`ModelCard.InputTypes`, `ModelCard.SupportsImages()`), but the lookup path does
+not: `model.ResolveContextSize` reaches a card through the optional `ModelNamer`
+interface, which only `openaiResponseModel` and `FallbackChatModel` (by
+delegation) implement. The other eight providers implement neither `ModelNamer`
+nor `ContextSizer`. Wiring this means adding `ModelName()` to those eight first.
+
 ## Open hardening work
+
+- **Unify the two price types.** `middleware.ModelPrice`
+  (`InputPerMillion`/`OutputPerMillion`/`CacheReadPerM`/`CacheWritePerM`, used by
+  `NewCostTrackerMiddleware`) and `model.Price`
+  (`Input`/`Output`/`CacheRead`/`CacheWrite`, used by `NewCostTracking` and the
+  `model.ResolvePrice` overlay) describe the same thing with different names, so
+  the two cost middlewares cannot share one map and `docs/middleware.md` has to
+  warn readers about it. Pick one and alias or migrate the other.
 
 - Complete sandbox enforcement across custom tools, call-name aliases, shell
   execution, network allowlists, and resource limits.

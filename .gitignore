@@ -18,7 +18,9 @@ coverage.html
 Thumbs.db
 
 # Project
-CLAUDE.md
+# CLAUDE.md is tracked and published, so it is not ignored here. A gitignore rule
+# has no effect on an already-tracked file, and keeping one misled readers into
+# thinking it was private.
 .claude/
 .remember/
 docs/superpowers/

@@ -239,35 +239,120 @@ cfg := reloader.Get()
 
 ## Agent Pool (High-Throughput Deployment)
 
-Fan out work across a pool of agent workers for high-throughput batch processing:
+Fan out work across bounded workers for high-throughput batch processing. There
+are two pools with different shapes; pick by whether you want a handler or one
+agent instance per worker.
+
+### Handler pool (`runtime.NewPool`)
+
+This is what `examples/agent_pool` uses. Each request carries its own result
+channel, backpressure shows up as `ErrPoolFull` from `Submit`, and the pool stops
+with `Shutdown(ctx)`. There is no `Close` method.
 
 ```go
+pool := runtime.NewPool(
+    runtime.PoolConfig{MaxWorkers: 8, QueueSize: 100, WorkerTimeout: 10 * time.Second},
+    func(ctx context.Context, req *runtime.Request) *runtime.Result {
+        out, err := a.Reply(ctx, req.Input)
+        if err != nil {
+            return &runtime.Result{RequestID: req.ID, Error: err}
+        }
+        text := ""
+        if txt := out.GetTextContent("\n"); txt != nil { // GetTextContent returns *string
+            text = *txt
+        }
+        return &runtime.Result{RequestID: req.ID, Output: text}
+    },
+)
+
+resultCh := make(chan *runtime.Result, 1)
+if err := pool.Submit(&runtime.Request{
+    ID: "req-001", Input: "Summarize this document...", Ctx: ctx, ResultCh: resultCh,
+}); err != nil {
+    log.Printf("submit: %v", err) // ErrPoolFull under backpressure, ErrPoolClosed after Shutdown
+}
+res := <-resultCh
+log.Printf("Result: %s (%v)", res.Output, res.Duration)
+log.Printf("Stats: %+v", pool.Stats())
+
+if err := pool.Shutdown(ctx); err != nil {
+    log.Printf("shutdown: %v", err)
+}
+```
+
+### Per-worker agent pool (`runtime.NewAgentPool`)
+
+Each worker owns its own agent instance. Dependencies captured by the factory may
+still be shared and must support concurrent use, and agent history persists
+across the jobs one worker handles.
+
+`AgentFactory` is `func() agent.Agent`, and the `agent.Agent` interface requires
+`ID() string`, `Reply(ctx, ...any)`, `Observe`, `Interrupt` and
+`SetConsoleOutputEnabled`. `*agent.UnifiedAgent` has `Name()` and
+`Reply(ctx, string)` and none of the rest, so passing one directly does not
+compile. Bridge it with an adapter:
+
+```go
+// poolAgent adapts *agent.UnifiedAgent to agent.Agent for runtime.AgentFactory.
+type poolAgent struct{ a *agent.UnifiedAgent }
+
+func (w poolAgent) ID() string { return w.a.Name() }
+
+func (w poolAgent) Reply(ctx context.Context, args ...any) (*message.Msg, error) {
+    // AgentPool.Submit enqueues a single string. Guard the index so a caller
+    // that passes nothing degrades to an empty prompt instead of panicking.
+    var input string
+    if len(args) > 0 {
+        input, _ = args[0].(string)
+    }
+    return w.a.Reply(ctx, input)
+}
+
+func (w poolAgent) Observe(ctx context.Context, msgs []*message.Msg) error {
+    return w.a.Observe(ctx, msgs)
+}
+
+// UnifiedAgent has no equivalent for these two. Cancellation goes through the
+// context passed to Reply, and UnifiedAgent exposes no console-output toggle
+// (that method lives on AgentBase, which it does not embed), so both are no-ops.
+func (w poolAgent) Interrupt(context.Context, *message.Msg) error { return nil }
+func (w poolAgent) SetConsoleOutputEnabled(bool)                  {}
+
+var _ agent.Agent = poolAgent{} // compile-time check
+
 pool := runtime.NewAgentPool(
     func() agent.Agent {
-        return agent.NewUnifiedAgent("worker", "You are a data processor.", cm,
-            agent.WithToolkit(tool.NewEnhancedToolkit()),
-        )
+        return poolAgent{a: agent.NewUnifiedAgent("worker", "You are a data processor.", cm,
+            agent.WithToolkit(tool.NewEnhancedToolkit()))}
     },
     runtime.Workers(8),
     runtime.QueueSize(100),
 )
-defer pool.Close()
+defer pool.Close() // AgentPool has Close; Pool has Shutdown instead
 
-// Submit work items
 for _, item := range workItems {
-    result, _ := pool.Submit(ctx, item)
-    go func(r <-chan runtime.PoolResult) {
-        res := <-r
+    resultCh, err := pool.Submit(ctx, item)
+    if err != nil {
+        log.Printf("submit: %v", err)
+        continue
+    }
+    go func(ch <-chan runtime.PoolResult) {
+        res := <-ch
         if res.Err != nil {
             log.Printf("Error: %v", res.Err)
-        } else {
-            log.Printf("Result: %s", res.Output.GetTextContent("\n"))
+            return
         }
-    }(result)
+        if res.Output == nil {
+            return
+        }
+        // GetTextContent returns *string, so dereference it and check for nil.
+        // Printing the pointer yields an address.
+        if txt := res.Output.GetTextContent("\n"); txt != nil {
+            log.Printf("Result: %s", *txt)
+        }
+    }(resultCh)
 }
 ```
-
-Each worker owns an agent instance. Dependencies captured by the factory may still be shared and must support concurrent use. Agent history also persists across jobs handled by the same worker.
 
 ## Deterministic Replay for CI/CD
 
@@ -326,19 +411,153 @@ The test uses a non-nil offline mock because `NewUnifiedAgent` rejects nil model
 
 ## Scheduled Tasks
 
-Run agent tasks on a schedule:
+### In-process scheduling
 
 ```go
+// ag is the agent that runs each scheduled task, e.g. an *agent.UnifiedAgent.
+// Reply is a method on the agent, not a package-level function.
 scheduler := schedule.NewInMemoryScheduler()
+defer scheduler.Close()
 
 scheduler.Schedule(ctx, &schedule.Task{
     Name:     "daily-report",
+    RunAt:    time.Now().Add(24 * time.Hour), // omit to fire immediately
     Interval: 24 * time.Hour,
 }, func(ctx context.Context, task *schedule.Task) error {
-    _, err := agent.Reply(ctx, "Generate the daily summary report.")
+    _, err := ag.Reply(ctx, "Generate the daily summary report.")
     return err
 })
 ```
+
+`RunAt` fires once at that instant. `Interval` fires immediately when `RunAt` is
+zero, then every `Interval` after that first fire, so
+`Schedule(&Task{Interval: 24 * time.Hour}, fn)` runs `fn` before `Schedule`
+returns. Set `RunAt` as well to delay the first fire. A custom `Scheduler` implementation may also implement the optional
+`schedule.TaskRemover` interface; see "Custom Scheduler implementations" below.
+
+The two ways to schedule differ in ways that matter:
+
+| | `schedule` package | `app` HTTP API |
+|---|---|---|
+| Schedule shape | `RunAt` (one-shot) or `Interval` (fixed duration) | five-field cron / `@`-aliases |
+| First fire | **immediately**, when `RunAt` is zero | next matching minute-grid slot |
+| Persistence | none (process-local) | whatever `AppConfig.Storage` provides |
+| Stop it | `Scheduler.Cancel` | `DELETE /api/schedule/{id}` (see below) |
+
+### Scheduling through the HTTP API
+
+The `app` package (`app.CreateApp`, see [Full Application](#full-application))
+exposes cron-style schedules. These routes are not on `service.Service`; the two
+packages have separate route layouts:
+
+```
+POST   /api/schedule          {"session_id": "...", "cron_expr": "0 9 * * 1-5", "input": "..."}
+GET    /api/schedule
+GET    /api/schedule/{id}
+PATCH  /api/schedule/{id}     {"input": "...", "status": "paused"}
+DELETE /api/schedule/{id}
+```
+
+`cron_expr` is standard five-field cron (minute hour day-of-month month
+day-of-week) with `*`, values, ranges (`a-b`), steps (`*/n`, `a-b/n`, `a/n`),
+comma lists, month and day-of-week names, and these aliases: `@hourly`,
+`@daily` and `@midnight`, `@weekly`, `@monthly`, `@yearly` and `@annually`, plus
+`@every_5m`, `@every_10m`, `@every_30m`, `@every_1h` and `@every_12h`. Day-of-week
+accepts 0-7 where both 0 and 7 are Sunday. When both day fields are restricted, a
+day matches if either matches (Vixie cron semantics), so `0 9 */1 * 1-5` fires
+every day, not only on weekdays: only a literal `*` counts as unrestricted, so
+`*/1` counts as restricted.
+
+This is Vixie cron. The Quartz-only extensions (`?`, `L`, `W`, `#`, and a leading
+seconds field) are rejected with 400 rather than misparsed, so an expression
+migrated from Quartz fails at creation instead of firing at the wrong times. Drop
+the seconds field and replace `?` with `*`.
+
+The expression is parsed and validated before anything is persisted: a malformed
+one, or one that cannot fire within the next 8 years (`0 0 30 2 *`), is rejected
+with **HTTP 400**. Omit `cron_expr` for a single run about a second later, or
+set `run_once: true` to fire once at the next matching slot without repeating.
+After the single fire the record reports `status: "completed"` and its task entry
+is dropped.
+
+### Timezone: cron runs in the process timezone
+
+Next-fire times are computed in `time.Local` of the server process, and the API
+has no per-schedule timezone field. Set `TZ` in the container or pod spec, and
+pin it explicitly rather than inheriting the host:
+
+```yaml
+env:
+  - name: TZ
+    value: Asia/Shanghai
+```
+
+Two consequences worth knowing:
+
+- Zones whose UTC offset is not a whole hour (Asia/Kolkata +5:30, Asia/Tehran
+  +3:30, Asia/Yangon +6:30, Australia/Darwin +9:30, America/St_Johns −3:30,
+  Asia/Kathmandu +5:45) are supported. The scheduler works on local calendar
+  fields rather than absolute-time rounding.
+- On a DST fall-back day a repeated local hour is walked through, so an
+  expression targeting it can fire twice; on a spring-forward day a time inside
+  the gap is skipped to the next matching day.
+
+### Stopping a schedule
+
+Use `DELETE /api/schedule/{id}`. It marks the record canceled and cancels the
+armed task, and a cancel that races with a re-arm also cancels the freshly armed
+task, so no further chat runs.
+
+`PATCH {"status": "paused"}` also stops the chain, and the change is one-way: no
+armed task is left to resume, so setting `active` again is refused with 409 and
+the status stays as it was. Create a new schedule instead. Any non-active status
+behaves the same way, including an empty one, so two PATCH calls cannot reopen
+the path.
+
+The status field is not validated against a vocabulary, so
+`PATCH {"status": "canceled"}` marks the record canceled without canceling the
+armed task, and the next fire still runs one chat before the chain stops. Use
+`DELETE` to cancel a schedule.
+
+### Upgrade note: schedules fire at different times and no longer fire on creation
+
+Before this release `cron_expr` was not parsed as cron. Only `@hourly`, `@daily`,
+`@every_5m`, `@every_10m` and `@every_30m` were recognized. Everything else,
+including `@every_1h`, `@every_12h`, `@weekly`, `@yearly` and any five-field
+expression such as `0 9 * * *`, became an hourly interval without any diagnostic.
+Recognized values became a `schedule.Interval` with no `RunAt`, and the in-memory
+scheduler runs an Interval task immediately, before starting the ticker.
+
+Both halves changed:
+
+| | before | after |
+|---|---|---|
+| First fire | immediately at creation | at the next matching minute-grid slot |
+| `@every_5m` created 10:03 | 10:03, 10:08, 10:13 … | 10:05, 10:10, 10:15 … |
+| `@every_12h` | hourly (unrecognized → default) | 00:00 and 12:00 |
+| `@every_1h` | hourly (unrecognized → default) | on the hour |
+| `0 9 * * *` | hourly (unrecognized → default) | daily at 09:00 |
+
+Persisted schedules keep their stored expression but fire on the new grid, and no
+longer fire on creation. Audit them after upgrading in both directions: a job that
+used to run hourly may now run twice a day or once a day, and a job that used to
+run once at deploy time now waits for its next slot. Expressions the old parser
+accepted and the new one rejects now answer 400; see "Scheduling through the HTTP
+API" above for the accepted syntax.
+
+### Custom Scheduler implementations
+
+`InMemoryScheduler` is process-local: schedules do not survive a restart and are
+not shared between replicas. For a persistent or distributed backend, implement
+`schedule.Scheduler`. Two details matter:
+
+- A cron schedule re-arms by scheduling a fresh one-shot task per fire.
+  Implement `schedule.TaskRemover` (`Remove(taskID string)`) so spent entries can
+  be dropped; otherwise a per-minute schedule accumulates one entry per fire for
+  the life of the process. `InMemoryScheduler` implements it.
+- The manager publishes the record before calling `Schedule`, and a callback may
+  run synchronously inside `Schedule`. Do not assume the callback runs later, and
+  do not call back into the manager while holding your own lock.
 
 ## Production Checklist
 

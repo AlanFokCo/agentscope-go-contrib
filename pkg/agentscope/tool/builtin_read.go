@@ -258,7 +258,7 @@ func ReadTool() Tool {
 	return &readTool{
 		BaseTool: BaseTool{
 			ToolName:        "Read",
-			ToolDescription: "Read a file's contents with line numbers. Supports offset and limit for large files (max 1MB). Image files (png/jpg/gif/webp/bmp/tiff/ico up to 256KB) are returned as an image the model can see.",
+			ToolDescription: "Read a file's contents with line numbers. Supports offset and limit for large files (max 1MB). Image files (png/jpg/jpeg/gif/webp/bmp/tiff/tif/ico, up to 256KB) are returned as an image the model can see.",
 			ToolSchema:      readSchema,
 			ReadOnly:        true,
 			ConcurrencySafe: true,

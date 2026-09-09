@@ -29,18 +29,25 @@ consistent.
 
 4. **Build & test locally**
 
-   From the repository root:
+   From the repository root. This is what CI runs, on a 3-OS matrix
+   (ubuntu / macos / windows):
 
    ```bash
-   # Build core library and all examples
-   go build ./...
-   go build ./examples/...
-
-   # Run tests once there are tests available
-   go test ./...
-
-   # Basic static analysis
+   go build ./... && go build ./examples/...
    go vet ./...
+   go test -race -count=1 ./...   # -race is mandatory: CI gates on it, and
+                                  # several concurrency fixes are only visible
+                                  # to the race detector
+   golangci-lint run ./...        # v2; CI gates on 0 issues
+   # install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+   ```
+
+   `go test ./...` without `-race` is not sufficient: it passes on races that CI
+   then fails. After touching `pkg/agentscope/tool/bash_parser.go` or `safety.go`,
+   also run the fuzz smoke:
+
+   ```bash
+   go test -fuzz=FuzzBashSafety -fuzztime=30s ./pkg/agentscope/tool/
    ```
 
    Some examples require external services:
@@ -103,8 +110,20 @@ consistent.
 
 - Keep `README.md` up to date whenever you:
   - Add a new major feature.
-  - Introduce a new example under `examples/`.
+  - Introduce a new example under `examples/`, and add it to `docs/examples.md`
+    and the README example table. Both tables are counted against `ls examples/`.
   - Change public APIs.
+
+- `README.es-ES.md` follows a convention: feature additions may lag, factual
+  corrections may not. If your change fixes a wrong number, a wrong API signature,
+  or an overclaim in `README.md`, apply the same fix to `README.es-ES.md` in the
+  same commit. New feature sections may wait for a translation pass.
+
+- Code comments may cite internal review artifacts (`HARNESS_DESIGN`,
+  `HARNESS review L-n`, `PORTING_PLAN`) that are not published; this repo
+  `.gitignore`s them. Treat those tags as historical rationale rather than
+  references a reader can look up. Do not add new ones. Write the rationale
+  inline instead.
 
 - For new features:
   - Prefer to add a **small, focused example** under `examples/` that demonstrates how to

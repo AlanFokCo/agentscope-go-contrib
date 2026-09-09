@@ -82,22 +82,43 @@ if _, err := replayed.Reply(ctx, "plan a trip to Tokyo"); err != nil { log.Fatal
 
 ### Piscina de Agentes con Fan-out (`runtime/`)
 
-Procesa N sesiones concurrentes con goroutines de trabajo acotadas y backpressure. Cada trabajador posee su propia instancia de agente: sin estado mutable compartido.
+Procesa N sesiones concurrentes con goroutines de trabajo acotadas y backpressure.
+
+`runtime.NewPool` es la piscina basada en un manejador y la que usa
+`examples/agent_pool`; cada petición lleva su propio canal de resultado y la
+piscina se detiene con `Shutdown(ctx)`:
 
 ```go
-pool := runtime.NewAgentPool(
-    func() agent.Agent {
-        return agent.NewUnifiedAgent("worker", "...", cm, agent.WithToolkit(tk))
+pool := runtime.NewPool(
+    runtime.PoolConfig{MaxWorkers: 8, QueueSize: 100, WorkerTimeout: 10 * time.Second},
+    func(ctx context.Context, req *runtime.Request) *runtime.Result {
+        out, err := a.Reply(ctx, req.Input)
+        if err != nil {
+            return &runtime.Result{RequestID: req.ID, Error: err}
+        }
+        text := ""
+        if txt := out.GetTextContent("\n"); txt != nil { // GetTextContent devuelve *string
+            text = *txt
+        }
+        return &runtime.Result{RequestID: req.ID, Output: text}
     },
-    runtime.Workers(16),
-    runtime.QueueSize(256),
 )
-defer pool.Close()
 
-resultCh, _ := pool.Submit(ctx, "Summarize this document...")
-result := <-resultCh
-fmt.Println(result.Output.GetTextContent("\n"))
+resultCh := make(chan *runtime.Result, 1)
+if err := pool.Submit(&runtime.Request{ID: "req-001", Input: "Resume este documento...",
+    Ctx: ctx, ResultCh: resultCh}); err != nil {
+    log.Fatal(err) // runtime.ErrPoolFull cuando la cola está llena
+}
+res := <-resultCh
+log.Println(res.RequestID, res.Output)
+if err := pool.Shutdown(ctx); err != nil { log.Fatal(err) }
 ```
+
+También existe `runtime.NewAgentPool(factory, runtime.Workers(n), runtime.QueueSize(n))`,
+que da a cada trabajador su propia instancia de agente. Su fábrica debe devolver
+la interfaz `agent.Agent` (`ID`, `Reply(ctx, ...any)`, `Observe`, `Interrupt`,
+`SetConsoleOutputEnabled`) — **`*agent.UnifiedAgent` no la implementa**, así que
+requiere un pequeño adaptador. Véase `docs/deployment.md` y `docs/go-exclusive.md`.
 
 ### Configuración con Hot-Reload (`hotreload/`)
 
@@ -306,7 +327,7 @@ Middlewares integrados: TracingMiddleware, TTSMiddleware, ReplyBudgetControlMidd
 
 Kit de herramientas de agente de código listo para producción:
 
-- **Bash / Read / Write / Edit / Glob / Grep** — Sistema de archivos + shell completo con detección de inyección a nivel AST, protección de rutas peligrosas, reconocimiento de comandos de solo lectura
+- **Bash / Read / Write / Edit / Glob / Grep** — Sistema de archivos + shell completo con detección de inyección a nivel AST, protección de rutas peligrosas, reconocimiento de comandos de solo lectura. `Read` devuelve imágenes (png/jpg/jpeg/gif/webp/bmp/tiff/tif/ico, hasta 256 KB) como bloques de imagen que un modelo multimodal puede ver, además de un marcador de texto para que un modelo sin visión reciba una descripción honesta en lugar de un resultado vacío
 - **Gestión de Tareas** — `task_create`, `task_get`, `task_list`, `task_update` con seguimiento de dependencias bidireccional
 - **Salida Estructurada** — `GenerateStructuredOutput` fuerza respuestas compatibles con JSON Schema mediante llamadas de herramienta sintéticas con reintentos automáticos
 - **Memoria a Largo Plazo** — Middleware de memoria entre sesiones con 3 modos (estático, controlado por agente, ambos), respaldado por búsqueda de similitud vectorial o API REST de mem0
@@ -323,7 +344,7 @@ Kit de herramientas de agente de código listo para producción:
 
 | Protocolo | Descripción |
 |----------|-------------|
-| **MCP** | Cliente MCP completo (Stdio + HTTP/SSE) con descubrimiento automático de herramientas |
+| **MCP** | Cliente MCP sobre Stdio y HTTP JSON-RPC con descubrimiento automático de herramientas. Aún no hay transporte SSE/streamable-HTTP |
 | **A2A HTTP** | Agente-a-Agente sobre HTTP vía `A2AAgent` + `HTTPClient` |
 | **A2A gRPC/TCP** | Malla bidireccional de baja latencia (TCP + JSON delimitado por líneas) |
 | **AG-UI** | Protocolo de servicio de agente para integración de frontend |
@@ -442,7 +463,7 @@ a := agent.NewUnifiedAgent("bot", "...", cm,
 pkg/agentscope/
 ├── agent/                  # Interfaz de Agente + UnifiedAgent, UserAgent, A2AAgent
 ├── model/                  # Interfaz ChatModel + 9 proveedores + 78 fichas de modelo
-├── tool/                   # Interfaz de Herramienta + FunctionTool + 17 herramientas integradas + análisis de seguridad
+├── tool/                   # Interfaz de Herramienta + FunctionTool + 24 herramientas integradas + análisis de seguridad
 ├── message/                # Msg + ContentBlock (texto, pensamiento, tool_call, tool_result, datos, pista)
 ├── event/                  # 30 tipos de evento para el ciclo de vida en streaming
 ├── middleware/             # Cadena de cebolla de 7 ganchos + tracing, TTS, presupuesto, memoria, métricas, costo
@@ -510,7 +531,7 @@ pkg/agentscope/
 | `agent_v2` | UnifiedAgent con llamadas nativas a herramientas de API |
 | `streaming` | Streaming en tiempo real vía `ReplyStream` + canal de eventos |
 | `react_tool` | UnifiedAgent con FunctionTool personalizado |
-| `react_builtin_tools` | UnifiedAgent con kit de herramientas integrado mejorado (bash, read, write, edit, glob, grep) |
+| `react_builtin_tools` | UnifiedAgent con el kit de herramientas integrado mejorado (bash, read, write, edit, multiedit, applypatch, glob, grep) |
 | **Model API** | |
 | `model_call` | API cruda del modelo: streaming + llamadas a herramientas de dos rondas + salida estructurada |
 | `structured_output` | Fuerza salida compatible con JSON Schema vía `GenerateStructuredOutput` |
@@ -563,6 +584,13 @@ pkg/agentscope/
 | `tracing_otlp` | Patrón de configuración OTLP (sin dependencia OTel SDK) |
 | **Kubernetes** | |
 | `k8s_workspace` | Sandbox K8s + herramientas de cluster solo lectura |
+| `console` | Chat interactivo en terminal con un agente (renderizado en streaming + confirmación de llamadas a herramientas) |
+| `dingtalk_channel` | Conecta un agente a DingTalk (entrada por Stream SDK, respuestas por webhook, confirmaciones en modo texto) |
+| `agentic_memory` | Memoria basada en archivos: persistencia JSON Lines con `FileStore` + middleware agéntico `MEMORY.md` |
+| `skill_partitions` | Particiones de habilidades por agente: plantilla `.seed`, equipamiento único, migración, purga |
+| `workspace_sharing` | Compartición sesión–espacio de trabajo + endpoints de artefactos de solo lectura (`list_dir`/`read_file`) |
+| `replayview` | Visor en terminal para registros de ejecución RunJSONL (recorre los eventos paso a paso) |
+| `rundiff` | Alinea dos registros RunJSONL y muestra dónde difieren |
 
 ---
 

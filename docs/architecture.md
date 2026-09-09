@@ -2,7 +2,7 @@
 
 ## Overview
 
-agentscope-go is organized as a single Go module at `github.com/alanfokco/agentscope-go`. All library code lives under `pkg/agentscope/`, runnable demos under `examples/`.
+agentscope-go is organized as a single Go module at `github.com/alanfokco/agentscope-go/v2`. The `/v2` major-version suffix is part of every import path. All library code lives under `pkg/agentscope/`, runnable demos under `examples/`.
 
 ## Package Structure
 
@@ -65,17 +65,34 @@ pkg/agentscope/
 │   ├── models/            # 78 YAML model cards (//go:embed)
 │   └── pricing/           # Embedded default price card for cost governance
 │
-├── tool/                  # Tool system
-│   ├── tool.go            # Tool interface, BaseTool, FunctionTool, Toolkit
+├── tool/                  # Tool system, 24 registered tool names
+│   ├── tool.go            # Tool interface, BaseTool, FunctionTool, Toolkit, input validation + schema coercion
+│   ├── builtin.go         # Shared constants (MaxFileSize, MaxInlineImageBytes) + shell/view aliases
 │   ├── builtin_bash.go    # Bash tool with AST-level safety analysis
-│   ├── builtin_read.go    # File read tool
-│   ├── builtin_write.go   # File write tool
+│   ├── builtin_read.go    # File read tool; images come back as base64 DataBlocks
+│   ├── builtin_write.go   # File write tool (10 MB cap, atomic replacement)
 │   ├── builtin_edit.go    # File edit tool (search/replace)
+│   ├── builtin_multiedit.go   # MultiEdit — validate all edits before rewriting once
+│   ├── builtin_apply_patch.go # ApplyPatch — validate a unified diff before rewriting
 │   ├── builtin_glob.go    # Glob pattern matching
 │   ├── builtin_grep.go    # Text search
+│   ├── builtin_lsp.go     # Language-server queries
+│   ├── builtin_notebook.go    # Jupyter notebook cell editing
+│   ├── builtin_webfetch.go    # WebFetch (SSRF-guarded, see webfetch_ssrf.go)
+│   ├── builtin_spawn.go   # Agent — spawn a sub-agent
+│   ├── builtin_reset_tools.go # ResetTools — activate/deactivate tool groups
+│   ├── builtin_schedule.go    # ScheduleCreate/Delete/List/View
 │   ├── builtin_task.go    # Task management (create/get/list/update)
-│   ├── bash_parser.go     # Command safety analysis (injection, dangerous paths)
-│   └── backend.go         # Backend interface (exec shell, read/write files)
+│   ├── compress_context.go    # compress_context — model-driven compression (#2143)
+│   ├── orchestrator.go    # Sandbox policy checks + tool dispatch
+│   ├── read_cache.go      # Read cache: FIFO eviction, backend-mtime freshness, copy-on-read
+│   ├── bash_parser.go     # Command safety analysis (injection, dangerous paths, interpreter attacks)
+│   ├── safety.go          # Dangerous file/directory lists
+│   ├── workspace_jail.go  # Workspace-relative path confinement
+│   ├── webfetch_ssrf.go   # SSRF guard for WebFetch
+│   ├── chunk.go           # Output chunking helpers
+│   ├── proc_unix.go / proc_windows.go  # Process-group isolation on Unix
+│   └── backend.go         # Backend interface (exec shell, read/write files) + optional BackendStatter
 │
 ├── message/               # Message types
 │   ├── msg.go             # Msg struct with polymorphic ContentBlock
@@ -120,8 +137,13 @@ pkg/agentscope/
 │   ├── knowledge_base.go  # KnowledgeBase — high-level add/query
 │   ├── qdrant_index.go    # QdrantIndex — Qdrant vector store backend
 │   ├── qdrant_text_index.go # QdrantTextIndex — auto-embeds text then stores
+│   ├── elasticsearch.go   # ElasticsearchIndex — BM25 + dense hybrid
+│   ├── mongodb.go         # MongoDBIndex — Atlas $vectorSearch
+│   ├── milvus.go          # MilvusIndex — Milvus vector store
+│   ├── rerank.go          # Reranker interface + RerankedIndex wrapper
+│   ├── llm_rerank.go      # LLMReranker — rerank via any ChatModel
 │   └── parser/            # Document parsers
-│       ├── parser.go      # Parser interface, ChunkConfig, ChunkText
+│       ├── parser.go      # Parser interface, ChunkConfig (Unit + Validate), ChunkText
 │       ├── text.go        # TextParser (.txt, .md, .csv, .log)
 │       ├── pdf.go         # PDFParser (stream-based text extraction)
 │       ├── word.go        # WordParser (.docx XML extraction)
@@ -158,10 +180,10 @@ pkg/agentscope/
 │       ├── openai/        # tts-1, tts-1-hd
 │       └── gemini/        # gemini-2.5-flash-preview-tts
 │
-├── storage/               # State persistence (InMemory, File, Redis)
+├── storage/               # State persistence (InMemory, File, SQL, Redis + RedisFullStorage)
 ├── service/               # HTTP Agent Service + SSE + AG-UI protocol
 ├── tracing/               # Tracer interface + OpenTelemetry + LoggerTracer
-├── schedule/              # InMemoryScheduler for periodic tasks
+├── schedule/              # InMemoryScheduler + optional TaskRemover; cron parsing lives in app/
 ├── messagebus/            # InMemory + Redis pub/sub + registry operations
 ├── session/               # Session KV store
 ├── skill/                 # Reusable skill system + SkillManager registry
@@ -184,7 +206,7 @@ pkg/agentscope/
 ├── app/                   # Full application bootstrap (CreateApp)
 ├── agenttest/             # Test helpers, fixtures, fault injection (faults/)
 ├── providercontract/      # Test-only provider contract wall (usage, streaming, errors)
-└── internal/              # httpx (HTTP+SSE), jsonx (JSON repair)
+└── internal/              # httpx (HTTP+SSE), httpsec (SSRF guard), jsonx (JSON repair + schema coercion), fsutil (atomic writes)
 ```
 
 ## Core Concepts
@@ -201,7 +223,7 @@ The `Agent` interface defines five methods: `ID()`, `Reply()`, `Observe()`, `Int
 
 ### Model
 
-`ChatModel` provides `Chat()`, `ChatStream()`, `CountTokens()`. Nine provider adapters share common patterns: functional options via `CallOption`, retry logic, `ClientOptions` for HTTP customization. Streaming wire formats are provider-specific; several adapters use SSE, while Ollama uses newline-delimited JSON.
+`ChatModel` provides `Chat()`, `ChatStream()`, `CountTokens()`. Nine provider adapters share common patterns: functional options via `CallOption`, retry logic, `ClientOptions` for HTTP customization. All nine adapters stream over SSE: eight go through `httpx.DoSSERequest`, and the OpenAI Responses adapter parses the `data:` frames itself. Ollama streams via its OpenAI-compatible `/v1/chat/completions` endpoint, not its native newline-delimited JSON API.
 
 78 model cards are bundled across 8 provider directories, plus 9 TTS model cards.
 

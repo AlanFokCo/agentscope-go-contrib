@@ -20,13 +20,21 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 
 | Version | Supported |
 |---------|-----------|
-| main branch | Yes |
+| `main` | Yes. Receives fixes first |
+| `v2.0.9` (latest tag) | Best effort, critical fixes only. Hardening commits have landed after this tag and are not in any release yet |
+| `v2.0.8` and earlier | No. Upgrade |
 
 ## Security Considerations
 
 agentscope-go includes tools that can execute shell commands (`Bash` tool) and read/write files. When deploying agents in production:
 
 - Use the **Permission Engine** to control tool access (prefer `Explore` or `Default` mode over `Bypass`)
-- Use **Workspace sandboxing** (`DockerWorkspace` or `E2BWorkspace`) for untrusted tool execution
+- Use workspace sandboxing for untrusted tool execution: `DockerWorkspace`,
+  `K8sWorkspace`, or `BubblewrapWorkspace` on Linux, and `AppleContainerWorkspace`
+  on macOS. Cloud sandboxes (`E2BWorkspace`, `OpenSandboxWorkspace`,
+  `DaytonaWorkspace`) move the trust boundary to the vendor, so verify their
+  isolation guarantees yourself. No backend in this repo enforces network
+  allowlists or resource limits; see
+  [STABILITY.md, Open hardening work](STABILITY.md#open-hardening-work)
 - Never expose the Agent Service HTTP endpoints without authentication
 - Rotate API keys regularly and use `SecretStr` to prevent key leakage in logs

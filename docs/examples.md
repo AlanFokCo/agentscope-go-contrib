@@ -15,7 +15,7 @@ go run ./examples/<name>
 | `agent_v2` | UnifiedAgent with native API tool calling (get_weather) | Yes |
 | `streaming` | Real-time streaming via `ReplyStream` + event channel | Yes |
 | `react_tool` | UnifiedAgent with a custom sum_numbers FunctionTool | Yes |
-| `react_builtin_tools` | UnifiedAgent with enhanced built-in toolkit (bash, read, write, edit, glob, grep) | Yes |
+| `react_builtin_tools` | UnifiedAgent with the enhanced built-in toolkit (bash, read, write, edit, multiedit, applypatch, glob, grep) | Yes |
 | `console` | Interactive terminal chat: streamed rendering, tool-call confirmation (y/N/a), Ctrl+C interruption | Yes |
 | `dingtalk_channel` | DingTalk robot: Stream SDK inbound, webhook Markdown replies, text-mode tool confirmations | Yes |
 
@@ -60,6 +60,9 @@ go run ./examples/<name>
 | `webui` | Web UI Studio with streaming chat, tool visualization, HITL | Yes |
 | `scheduled_task` | One-shot and recurring task scheduling | No |
 | `realtime_echo` | Realtime streaming interface with echo client | No |
+| `agentic_memory` | File-based memory: `FileStore` JSON Lines persistence plus the `MEMORY.md` agentic-memory middleware | No |
+| `skill_partitions` | Per-agent skill partitions: `.seed` template, equip-once, legacy migration, purge | No |
+| `workspace_sharing` | Session-to-workspace sharing with refcounts, plus read-only artifact endpoints (`list_dir` / `read_file`) | No |
 
 ## Edge & IoT
 
@@ -77,7 +80,7 @@ go run ./examples/<name>
 | `replay` | Record agent interactions to tape, then replay deterministically | Yes (record) / No (replay) |
 | `replayview` | Terminal viewer for RunJSONL run logs (step through events) | No |
 | `rundiff` | Align two RunJSONL run logs and print where they diverge | No |
-| `agent_pool` | Fan-out agent pool with 8 workers processing batch inputs | Yes |
+| `agent_pool` | Handler-based fan-out pool (`runtime.NewPool`: 5 workers, queue 20, 15 requests) with backpressure and stats. The handler simulates work, so no model call is made | No |
 | `hotreload` | Watch config file for changes and update agent at runtime | Yes |
 | `wasm_sandbox` | Execute WASM modules in a sandboxed environment | No |
 | `grpc_a2a` | TCP Agent Mesh: server + client communicating via newline-delimited JSON | No |

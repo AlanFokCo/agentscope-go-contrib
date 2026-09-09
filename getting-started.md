@@ -107,7 +107,7 @@ Optional: `DASHSCOPE_BASE_URL` to override the DashScope endpoint.
 
 ## Running Examples
 
-The project includes 47 examples. Run any of them:
+The project includes 54 examples. Run any of them:
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
@@ -128,19 +128,19 @@ See [docs/examples.md](docs/examples.md) for the full list.
 - [Tools](docs/tools.md) — Built-in tools, custom function tools, and document parsers
 - [Middleware](docs/middleware.md) — Intercept and extend agent behavior (7 hooks)
 - [Deployment](docs/deployment.md) — Run as an HTTP service, workspace sandboxing, agent pools
-- [Go-Exclusive Features](docs/go-exclusive.md) — Capabilities unique to the Go implementation
+- [Go Runtime Features](docs/go-exclusive.md) — Capabilities this Go repository provides
 
-## Go-Exclusive Features (Quick Reference)
+## Go Runtime Features (Quick Reference)
 
-These features are unique to the Go implementation and have no Python equivalent:
+These are capabilities provided by this Go repository. This quick reference does not assert feature exclusivity against any particular Python release. See [Go Runtime Features](docs/go-exclusive.md) for the full wording and code examples:
 
 | Feature | Package | Description |
 |---------|---------|-------------|
 | **Deterministic Replay** | `replay` | Record model calls, replay in CI without API keys |
-| **Fan-out Agent Pool** | `runtime` | Worker pool for parallel batch processing |
+| **Fan-out Agent Pool** | `runtime` | Worker pool for parallel batch processing (`NewPool` handler-based; `NewAgentPool` needs an `agent.Agent` adapter) |
 | **Hot-Reload Config** | `hotreload` | Watch config files, apply changes without restart |
 | **WASM Sandbox** | `wasm` | Execute WebAssembly modules with resource limits |
 | **TCP Agent Mesh** | `a2a/grpc` | Direct TCP communication between distributed agents |
 | **Agent Load Testing** | `bench` | Benchmark agents with concurrency and latency metrics |
 
-See [Go-Exclusive Features](docs/go-exclusive.md) for detailed documentation with code examples.
+See [Go Runtime Features](docs/go-exclusive.md) for detailed documentation with code examples.

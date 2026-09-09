@@ -26,6 +26,14 @@ func TestParseCronScheduleInvalid(t *testing.T) {
 		"* * 32 * *", "* * * 13 *", "* * * 0 *", "* * * * 8",
 		"abc * * * *", "*/0 * * * *", "5-1 * * * *", "@bogus",
 		"1-2-3 * * * *", "-1 * * * *",
+		// Quartz-only extensions are not supported; this parser is Vixie cron.
+		// They are rejected rather than misparsed, because a caller migrating a
+		// Quartz expression would otherwise get a schedule that fires at the
+		// wrong times with no diagnostic.
+		"0 9 ? * 1-5", "0 9 * * ?", "0 9 L * *", "0 9 * * 5L",
+		"0 9 W * *", "0 9 15W * *", "0 9 ? * 6#3",
+		// A six-field expression with seconds (another Quartz shape).
+		"0 0 9 * * ?",
 	}
 	for _, expr := range invalid {
 		_, err := parseCronSchedule(expr)

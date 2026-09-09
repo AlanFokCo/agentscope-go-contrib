@@ -150,7 +150,33 @@ for {
 
 ## SensorMiddleware
 
-Injects sensor readings into the system prompt so the agent has environmental awareness:
+Injects sensor readings into the system prompt so the agent has environmental awareness.
+
+`device.Sensor` is `Connector` plus `Read(ctx) (*SensorReading, error)`, and the
+library ships no concrete implementation. `NewI2CConnector`, `NewSerialConnector`,
+`NewGPIOConnector` and `NewCANConnector` all return plain `Connector` values,
+which cannot be passed to `Register`. Wrap one:
+
+```go
+type tmp102 struct{ device.Connector }
+
+func (s tmp102) Read(ctx context.Context) (*device.SensorReading, error) {
+    data, err := s.Command(ctx, []byte{0x00}) // TMP102 temperature register
+    if err != nil {
+        return nil, err
+    }
+    celsius := float64(int16(data[0])<<4|int16(data[1])>>4) * 0.0625
+    return &device.SensorReading{Name: "temp", Value: celsius, Unit: "°C"}, nil
+}
+
+sm.Register("temperature", tmp102{device.NewI2CConnector("/dev/i2c-1", 0x48)})
+```
+
+`examples/edge_sensor` does this with a mock. `device.NewSensorTool(name,
+description, sensor, opts...)` wraps the same `Sensor` as an auto-allowed
+read-only tool. The concrete connectors are `//go:build linux` (see the table at
+the top of this page), so this code compiles on Linux only; build it with
+`GOOS=linux` elsewhere.
 
 ```go
 sm := device.NewSensorMiddleware(

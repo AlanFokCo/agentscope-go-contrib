@@ -4,10 +4,287 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Version sections below correspond to git tags (`v2.0.4` onward). Per-version
-details can be verified with `git log <prev-tag>..<tag> --oneline`.
+Version sections below correspond to git tags from `v2.0.4` onward. `[v2.0.3]`
+predates the tagging convention and has **no** tag, so it cannot be verified with
+`git log` — treat it as historical narrative. Per-version details for tagged
+releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
+
+### Added — upstream sync batch (Python 8/14–9/7 window)
+
+Nineteen upstream PRs ported. The rest were triaged as not applicable or
+deferred; `STABILITY.md` records the reason for each under "Deliberately not
+ported".
+
+- **Real cron scheduling** (`app/cron.go`, #2442): five-field cron with steps,
+  ranges, comma lists, month and day names, and the `@` aliases is parsed and
+  validated before a schedule is persisted. `POST /api/schedule` rejects an
+  invalid or never-firing expression with HTTP 400 through the typed
+  `*CronValidationError`. Previously every unrecognized expression, including
+  standard cron such as `0 9 * * *`, was folded into an hourly interval and
+  recorded as active. API note: the endpoint used to answer 201 for any string,
+  so expressions it accepted and the new parser rejects now answer 400. That
+  covers six-field and other Quartz forms (`0 0 9 * * *`, `?`, `L`, `W`, `#`),
+  `@every_*` values outside `5m`/`10m`/`30m`/`1h`/`12h`, `@reboot`, and any
+  string that is not five fields
+- **`schedule.TaskRemover`**: optional `Scheduler` capability for dropping a
+  task entry that has already fired. `InMemoryScheduler` implements it. A cron
+  chain re-arms by scheduling a fresh one-shot task per fire, so without a
+  removal path a per-minute schedule accumulated one dead map entry and one
+  `context.CancelFunc` per fire for the life of the process
+- **`workspace.ExecPathResolver`**: optional capability returning the path
+  spelling a backend's `Execute` resolves, so `ToolBackend.StatFile` measures
+  the same file `ReadFile` read. `DockerWorkspace`, `DaytonaWorkspace` and
+  `AppleContainerWorkspace` implement it and return an absolute in-sandbox path.
+  LocalWorkspace, K8s, E2B, OpenSandbox and bubblewrap do not implement it: their
+  `Execute` uses the caller-relative path, and bubblewrap binds its host root to
+  `/`
+- **`tool.BackendStatter`**: optional `Backend` capability (`StatFile`) letting
+  the read cache judge freshness against the backend's own filesystem instead of
+  the host's (#2092). `workspace.ToolBackend` implements it with POSIX `stat`,
+  trying the GNU `-c %Y` and BSD/busybox `-f %m` forms, behind a path
+  containment check
+- **Read returns images** (`tool`, #2114): `.png .jpg .jpeg .gif .webp .bmp
+  .tiff .tif .ico` come back as base64 `DataBlock`s on both the host and backend
+  paths, preceded by a text placeholder such as `[shot.png: image/png, 12345
+  bytes]` so consumers that only read text still get a meaningful result. New
+  `tool.MaxInlineImageBytes` (256 KB): above it the image is reported as text
+  rather than inlined, because the token estimator decodes base64 back to raw
+  bytes and divides by four, making an inlined image cost roughly fileSize/4
+  tokens. PDF page rendering is not ported; it needs a rasterizer dependency
+- **Agent-driven compression** (`tool.NewCompressContextTool`,
+  `agent.WithAgentDrivenCompression`, #2143): registers a `compress_context`
+  tool the model can call itself
+- **`ContextConfig.MaxImageNum`** (#2362): the oldest context images beyond the
+  limit are replaced with text reminders before token counting. URL-backed
+  images keep a pointer
+- **`ContextConfig.AgentDrivenTriggerRatio`**: the threshold at which the
+  model-invoked `compress_context` may compress. Defaults to `TriggerRatio/2`
+  and is clamped to at most `TriggerRatio`. At the automatic threshold the agent
+  would always compress first and the model could never trigger the tool
+- **`rag.LLMReranker`** (`NewLLMReranker`, #1975): a `Reranker` over any
+  `ChatModel` using structured-output judging, with a per-(query, document)
+  score cache. Options are `WithLLMRerankerDocChars` (truncates by rune, so a
+  multi-byte character is never split), `WithLLMRerankerCacheMax`,
+  `WithLLMRerankerPrompt`, and `WithLLMRerankerPromptRunes`, which bounds the
+  whole judge prompt by shrinking the per-document budget rather than dropping
+  candidates (a dropped candidate scores 0 and sinks in the ranking)
+- **`rag.Document.Score`** (#2486): retrieval relevance, normalized so higher
+  means more relevant across Elasticsearch, Qdrant, MongoDB and Milvus. Milvus
+  L2 distance is negated, so callers that negated it themselves must stop.
+  `RerankedIndex` overwrites the field with the rerank score
+- **`ChunkConfig.Unit` and `Validate()`** (`rag/parser`, #2083 core): explicit
+  `ChunkUnitChars` / `ChunkUnitApproxTokens` so an API boundary can reject a bad
+  config instead of relying on a silent fallback
+- **`model.GenerateStructuredOutputWithUsage`** (#2433): accumulates usage
+  across structured-output strategy attempts. Compression usage is recorded and
+  emitted as a model-call-end event so budgets and cost tracking include it
+- **`permission.Context.TargetShell`, `Engine.CheckPermissionInContext`,
+  `tool.BackendPermissionContext`** (#2366 residual): shell-specific permission
+  checks follow the execution backend, so host-detected PowerShell patterns no
+  longer misfire on POSIX containers
+- **`tool_result_data_delta` emission**: an image tool result is now also emitted
+  as an event between the text delta and `tool_result_end`, so a consumer
+  rebuilding a message from the stream alone (`Msg.AppendEvent`: channel
+  gateways, console renderer, replay tapes) matches the agent's own context. The
+  event type and merge path already existed; nothing produced them
+- **`SchedulerManager.Update`**: mutates a record under its entry lock and
+  returns a copy. `Get` and `List` now return copies, so patching their result
+  has no effect
+- **Deployment scheduling documentation** (`docs/deployment.md`): the HTTP
+  schedule API, the accepted cron syntax, timezone behavior (expressions are
+  evaluated in the process's `time.Local` and the API has no per-schedule
+  timezone field, so pin `TZ` in the container), non-hour-offset and DST
+  behavior, `DELETE` versus `PATCH` for stopping a schedule, and what a custom
+  `Scheduler` implementation needs to know
+
+### Changed — upstream sync batch
+
+- `tool.NewCompressContextTool` takes a `tool.CompressFunc`
+  (`func(ctx) (tool.CompressionResult, error)`). This is new in this release: the
+  tool, `CompressFunc` and `CompressionResult` did not ship in any tagged
+  version. The tool reports whether anything was actually summarized, and says
+  so when the context was below the threshold, instead of claiming success on a
+  no-op. It is `ConcurrencySafe: false` because it rewrites the shared message
+  history, and returns `permission.BehaviorAllow` so an ASK-mode engine does not
+  stall every model-initiated compression
+- **BREAKING (behavior)** `cron_expr` is now parsed as cron. The previous parser
+  recognized only `@hourly`, `@daily`, `@every_5m`, `@every_10m` and
+  `@every_30m`; everything else, including `@every_1h`, `@every_12h`, `@weekly`,
+  `@yearly` and any five-field expression, became an hourly interval. Recognized
+  values became a `schedule.Interval` with no `RunAt`, and the in-memory
+  scheduler runs an Interval task immediately, so every cron schedule also fired
+  once at creation. Both halves changed. `@every_5m` created at 10:03 now fires
+  at 10:05 rather than at 10:03 and then 10:08, `@every_12h` means 00:00 and
+  12:00 rather than hourly, `0 9 * * *` means daily at 09:00 rather than hourly,
+  and nothing fires at creation any more. Persisted schedules keep their stored
+  expression and fire on the new grid; `docs/deployment.md` has the upgrade table
+- **BREAKING (behavior)** `CreateScheduleRequest.RunOnce` was accepted by the API
+  and read by nothing, so a schedule created with it re-armed like any other cron.
+  It now fires once at the next matching slot and does not re-arm. A client already
+  sending `run_once: true` therefore sees a repeating schedule become one-shot with
+  no change to the request, the response, or the status code. The expression is
+  still validated, since a malformed one is a client error either way. After that
+  single fire the record reports `completed` and the spent task is dropped through
+  `schedule.TaskRemover`; nothing marked a one-shot as finished before, so a listing
+  could not tell a schedule that fires tomorrow from one that fired yesterday and
+  never fires again. This also corrects the pre-existing no-`cron_expr` path, not
+  only `run_once`
+- **BREAKING (behavior)** `message.ToolResultBlock.Output` holds a
+  `[]message.ContentBlock` when a tool returned non-text blocks, and a plain
+  `string` otherwise. The field was already typed `any` and `GetOutputText()`
+  already existed, so this compiles unchanged, but a bare `.(string)` assertion
+  now panics on an image tool result. Read the field with `GetOutputText()` or a
+  comma-ok assertion
+- **BREAKING (behavior)** `SchedulerManager.Get` and `List` return copies rather
+  than live pointers, because the scheduler callback rewrites `TaskID` and
+  `Status` from another goroutine while HTTP handlers marshal them. Code that
+  mutated the returned record now writes to a throwaway copy and sees no effect,
+  with no compile error and no panic. `PATCH /api/schedule/{id}` goes through
+  `Update` and answers 409 when a status transition is refused, instead of 200
+  with a body that disagrees with the store
+- **BREAKING (behavior)** `ReadCache.GetCache` and `GetCacheWithMtime` return
+  copies. The signatures are unchanged, so nothing fails to compile, but
+  mutating the returned `*ReadCacheEntry` used to change the cache and now does
+  not. `removeAt` shifts elements inside the shared backing array, and the new
+  `Remove` (called by Write and Edit) made the previously returned internal
+  pointer race under concurrent tool batches
+- **BREAKING (behavior)** schedule status is one-way. Pausing, completing,
+  failing or blanking the status stops the re-arm chain, and `Update` refuses to
+  set `active` again from any non-active status, including an empty one, so two
+  PATCH calls cannot reopen the path. Only a record that is active has an armed
+  task behind it. Resuming means creating a new schedule. Sibling fields in the
+  same patch are still applied
+- **Tracing finish reasons** (#2450) are marshaled with `encoding/json`, because
+  a provider `StopReason` containing a quote produced an invalid attribute value.
+  The three failure shapes are now distinguishable: a canceled context reports
+  `interrupted`, a transport or handler failure reports `error`, and a partial
+  reply reported through `ChatResponse.Error` reports `incomplete`. All three
+  previously reported `interrupted`. Dashboard note: an alert filtering on
+  `interrupted` will see fewer hits and should match all three
+- **OpenAI Responses streaming** (#2426) emits blocks in the same order as the
+  non-streaming path: reasoning, then text, then tool calls. Replay follows block
+  order, and emitting text first replayed a reasoning item with nothing after it,
+  which is what #2426 exists to prevent. Tool calls keep the order the API
+  produced them in rather than map order. An empty replayable reasoning item is
+  skipped rather than sent as `{}`, and a turn whose blocks the API cannot carry
+  is emitted as an explicit placeholder instead of being dropped
+- **Schema-guided argument coercion** (`jsonx`, #2496) runs on every tool call,
+  not only when JSON parsing fails. Internal note: `jsonx.CoerceToSchema`
+  returns the coerced map and is copy-on-write, so it never rewrites the caller's
+  map, nested maps or slices. `internal/` carries no compatibility guarantee (see
+  `STABILITY.md`), so this is not a consumer-facing break
+- **Backend reads consult the cache.** A backend that does not implement
+  `BackendStatter` caches nothing, because a host `os.Stat` of a
+  workspace-relative path is meaningless or matches an unrelated host file. A
+  stat round-trip costs at most one exec per read: one on a miss to obtain the
+  mtime the entry is cached with, one on a hit to validate it
+- **Compression splitting** never sweeps an unfinished tool call into the
+  summarized portion and never leaves a call on the opposite side from its own
+  result (`pullSplitBackForToolPairs`, iterated to a fixpoint after
+  `adjustSplitForToolPairs`). Both repairs move the split backward, because
+  moving it forward can drag an in-flight call into the summary
+- **`limitContextImages` is copy-on-write.** `state.Context` shares its `*Msg`
+  pointers and nested tool-result block lists with snapshots handed out earlier
+  under the lock and read afterwards
+- **`RepetitionBreakerMiddleware`** (#1816) gained an independent error-streak
+  dimension. Error-state responses no longer count as successes
+- **xAI usage** (#2461) adds `completion_tokens_details.reasoning_tokens` for xAI
+  only. The shared OpenAI-family parse path is untouched, so other providers
+  cannot double-bill
+- **Gemini schemas** (#2437): nullable type arrays such as `["string","null"]`
+  are sanitized and multi-type arrays become `anyOf`. A combination that cannot
+  be sanitized is left for the API to reject rather than dropped
+- **`approxTokenChars` documentation corrected** (documentation only; chunking
+  behavior is unchanged): four characters per token under-counts CJK, where one
+  token is roughly one to one-and-a-half characters, so a chunk sized in
+  `approx_tokens` comes out larger in real tokens than configured. The previous
+  comment claimed the opposite
+- **`.gitignore`** covers root-level example executables, since
+  `go build ./examples/<name>` writes a binary of about 20 MB into the current
+  directory, and the internal planning and review documents
+
+### Fixed — upstream sync batch
+
+Two kinds of fix appear below. The first group corrects behavior that shipped in
+`v2.0.9` or earlier. The second group corrects defects this batch introduced and
+adversarial review caught before the commit; those never shipped, and are recorded
+because they explain the shape of the new code.
+
+**Shipped in `v2.0.9` or earlier**
+
+- **Anthropic mid-stream `error` events were skipped.** They arrive inside an
+  otherwise successful HTTP 200 stream, so the only visible symptom was the
+  misleading "stream ended without message_stop (truncated)". They are now parsed
+  into `ChatResponse.Error`, and the agent reply loop reads that field, logging a
+  warning and emitting a `model_partial_response` event. Nothing outside tracing
+  read it before, so a truncated reply was indistinguishable from a complete one
+- **OpenAI Responses streams that ended cleanly without `response.completed` were
+  silent**: `Error` was only set on a scanner failure. Same class as #2350
+- **`exceed_max_iters` was emitted on a successfully finished last iteration.**
+  It is now emitted only when the reply ran out of budget
+- **Agentic-memory default instructions** no longer carry the malformed
+  `</search>` tag (#2513)
+- **`WakeupDispatcher.Wakeup`** sends under the registry lock, closing a
+  send-on-closed-channel race with `Unregister` (#2476 class)
+
+**Introduced by this batch, fixed before the commit**
+
+- **Cron would have been unusable in every timezone whose UTC offset is not a whole hour.**
+  `next()` advanced with `time.Truncate`, which aligns to absolute UTC
+  boundaries, so in Asia/Kolkata (+5:30), Asia/Tehran (+3:30), Asia/Yangon
+  (+6:30), Australia/Darwin (+9:30), America/St_Johns (-3:30) and Asia/Kathmandu
+  (+5:45) an hour boundary landed on local HH:30 and no expression could match.
+  Schedule creation would have returned HTTP 400 for all of them. It now rebuilds from local
+  calendar fields with `time.Date`. The test suite and CI both ran on whole-hour
+  offsets and every test used `time.Local`, so nothing caught it
+- **`next()` could have spun forever on a DST fall-back day.** `time.Date` resolves an
+  ambiguous local hour to its first occurrence, so rebuilding hour+1 at 01:00 EST
+  returned 01:00 EST again. Every step now carries an absolute-time fallback
+- **`next()` could have returned a time in the past** on a fall-back day, because
+  rebuilding from local fields can move backward by the offset span. It now steps
+  until strictly after, so `Create` cannot hand the scheduler an already-due
+  `RunAt`
+- **A valid leap-day expression would have been rejected.** `0 0 29 2 *` fires at most once
+  every four years and the first cut of the scan window was one year, so it was refused as never
+  firing. The window is now eight years, which also covers the gap around a
+  century year that is not a leap year: from 2097 the next 29 February is 2104
+- **Canceling a schedule could have left it running.** A `Cancel` landing while a
+  re-arm was in flight canceled only the task it had already seen, so the freshly
+  armed one survived and ran one more chat after the user canceled. Re-arm and
+  cancel are now serialized on a per-record lock with a re-arm sequence number,
+  and the callback cancels a task armed during the race. The record is also
+  published before `Schedule`, so a scheduler that runs the callback
+  synchronously can no longer make the first fire see no record and degrade a
+  cron to a one-shot
+- **`PATCH /api/schedule/{id}` would have had no effect.** Making `Get` return
+  copies without updating the handler left it mutating a local copy and answering
+  200 with a body the store never saw, which also removed the ability to pause a chain
+- **`forcedFinalSummary` would have stored tool calls that never execute.**
+  `tool_choice: none` is a request rather than a guarantee, and Ollama, vLLM and
+  many OpenAI-compatible gateways ignore it. The stored pending calls were picked
+  up by the next reply and run as ghost tool calls (#2443)
+- **A typed slice would have been corrupted by argument coercion.** `ValidateInput` accepts
+  `[]string`, `[]float64` and `[]int` as arrays and Go callers pass those
+  directly, but the coercion branch only type-asserted `[]any`, so anything else
+  reached the lone-value wrapper and a list of N items became a one-item list
+  containing the list
+- **String-to-number coercion would have accepted non-finite values.** `strconv.ParseFloat`
+  parses `"NaN"`, `"Inf"` and `"1e999"`, which cannot be marshaled back to JSON.
+  The float64 branch already refused them; the string branch did not
+- **`ToolBackend.StatFile` would have had no path containment check.** It interpolated the
+  path straight into a shell command, which would have exposed the mtime and
+  existence of any reachable file had it been wired ahead of `ReadFile`
+
+### Not ported (reasons in `STABILITY.md`)
+
+GoalPipeline (#2428), team enhancements (#2386, #2379), the full A2AAgent
+protocol (#2142, pending an SDK decision), the workspace prewarm pool (#1755,
+needs isolation-policy and storage/lifecycle prerequisites), MCP SSE transport
+(#2311), and the channel and app Phase E items. Mid-stream failover is also
+still unimplemented: `FallbackChatModel` fails over on stream setup errors only,
+so a truncated stream is reported but not retried.
 
 ### Changed — evaluator-followup hardening (Phase 3 cleanup)
 - **`skill.ErrInvalidInput` sentinel**: `Store.Add` validation failures
@@ -210,8 +487,10 @@ details can be verified with `git log <prev-tag>..<tag> --oneline`.
   HITL park/resume, external tool, compression summary; randomized
   ids/timestamps normalized; regenerate with `-golden-update`
 - **Repetition breaker** (`middleware.NewRepetitionBreaker`): detects
-  identical successful tool-call spins (name+input hash; failed calls reset
-  the streak), injects a change-strategy reminder at threshold, and past the
+  identical successful tool-call spins (name+input hash; failed calls reset the
+  success streak — superseded within this same unreleased cycle by the
+  independent error-streak dimension in the "upstream sync batch" section
+  above), injects a change-strategy reminder at threshold, and past the
   threshold the typed `ErrToolRepetition` replaces the tool result (the
   over-threshold call itself still executes — side effects cannot be
   un-run — but its actual result is discarded and the model sees the
@@ -615,7 +894,8 @@ details can be verified with `git log <prev-tag>..<tag> --oneline`.
   ReplyBudgetControlMiddleware, LongTermMemoryMiddleware
 - Permission engine with 5 modes (Default, AcceptEdits, Explore, Bypass,
   DontAsk)
-- MCP client (Stdio + HTTP/SSE transport) with MCPTool adapter
+- MCP client (Stdio + HTTP JSON-RPC) with MCPTool adapter. There has never been
+  an SSE/streamable-HTTP transport; an earlier revision of this line claimed one
 - A2A (Agent-to-Agent) HTTP protocol
 - Agent Teams with Leader/Worker coordination tools
 - Pipeline with Then/If combinators + MsgHub for multi-agent routing

@@ -89,10 +89,17 @@ for name, reading := range readings {
 }
 ```
 
-With `CleanSession(false)` and QoS >= 1, the MQTT client automatically:
-1. Buffers messages during disconnection
-2. Retransmits when the broker connection is restored
-3. Maintains delivery guarantees
+`CleanSession(false)` preserves the **subscription** side across reconnects, so
+QoS >= 1 messages the broker queued for you while you were offline are redelivered
+on reconnect.
+
+It does not buffer outbound publishes. `MQTTTransport` sets no persistent store
+(`SetStore`), and its `Publish` calls `token.Wait()` and returns `token.Error()`
+to the caller when the client is disconnected. The adapter keeps no local queue.
+Buffering outbound readings during an outage is the application's job: write them
+to a local store (JSON Lines via `audit.NewFileLogger`, or `memory.FileStore`) and
+drain it on reconnect. The loop above does not do this: it discards the error from
+`Publish`, so readings produced during an outage are lost.
 
 ## Power Management
 
@@ -126,8 +133,11 @@ Use the device's local filesystem for operational logs:
 ```go
 import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/audit"
 
-logger := audit.NewFileLogger("/var/log/agent/audit.jsonl")
-// All tool executions, permission decisions, and errors are logged locally
+// NewFileLogger returns (*audit.FileLogger, error). The logger appends one JSON
+// line per tool execution, permission decision, and error.
+func setupAudit() (*audit.FileLogger, error) {
+    return audit.NewFileLogger("/var/log/agent/audit.jsonl")
+}
 ```
 
 Logs can be synced to the cloud when connectivity is available, or retrieved via physical access (USB, serial console).

@@ -133,3 +133,81 @@ func TestSchedulerCancelStopsRearm(t *testing.T) {
 		t.Errorf("canceled schedule re-armed: %d tasks", len(fs.tasks))
 	}
 }
+
+// CreateScheduleRequest.RunOnce was accepted by the API and read by nothing:
+// a schedule created with it re-armed like any other cron. It now fires once at
+// the next matching slot without repeating, while the expression is still
+// validated (a malformed one is a client error either way).
+func TestSchedulerRunOnceFiresAtNextSlotWithoutRearming(t *testing.T) {
+	fs := &fakeScheduler{}
+	m := NewSchedulerManager(fs, nil)
+	m.setChatFn(func(_ context.Context, _ string, _ string) error { return nil })
+
+	before := time.Now()
+	rec, err := m.Create(context.Background(), CreateScheduleRequest{
+		SessionID: "s1", CronExpr: "0 9 * * *", Input: "hi", RunOnce: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The first fire is still scheduled at the next 09:00, not "now + 1s".
+	if len(fs.tasks) != 1 {
+		t.Fatalf("scheduled tasks = %d, want 1", len(fs.tasks))
+	}
+	if fs.tasks[0].RunAt.Hour() != 9 || fs.tasks[0].RunAt.Minute() != 0 {
+		t.Errorf("RunAt = %v, want the next 09:00", fs.tasks[0].RunAt)
+	}
+	if !fs.tasks[0].RunAt.After(before) {
+		t.Errorf("RunAt %v should be in the future", fs.tasks[0].RunAt)
+	}
+
+	// Firing it must not arm another task.
+	if err := fs.fns[0](context.Background(), fs.tasks[0]); err != nil {
+		t.Fatalf("task fn: %v", err)
+	}
+	if len(fs.tasks) != 1 {
+		t.Errorf("run_once schedule re-armed: %d tasks", len(fs.tasks))
+	}
+	if got, _ := m.Get(rec.ID); got.Status != "completed" {
+		t.Errorf("status = %q, want completed (a spent one-shot is terminal, not still active)", got.Status)
+	}
+}
+
+// Validation still applies with run_once: a malformed expression is a client
+// error whether or not the schedule would repeat.
+func TestSchedulerRunOnceStillValidatesExpression(t *testing.T) {
+	for _, expr := range []string{"0 9 * * * *", "not cron", "0 0 30 2 *"} {
+		fs := &fakeScheduler{}
+		m := NewSchedulerManager(fs, nil)
+		_, err := m.Create(context.Background(), CreateScheduleRequest{
+			SessionID: "s1", CronExpr: expr, Input: "hi", RunOnce: true,
+		})
+		var verr *CronValidationError
+		if !errors.As(err, &verr) {
+			t.Errorf("expr %q with run_once: err = %v, want *CronValidationError", expr, err)
+		}
+		if len(fs.tasks) != 0 {
+			t.Errorf("expr %q reached the scheduler despite being invalid", expr)
+		}
+	}
+}
+
+// Without run_once the same expression re-arms, so the two paths are
+// distinguishable and the flag is not a no-op in the other direction either.
+func TestSchedulerWithoutRunOnceRearms(t *testing.T) {
+	fs := &fakeScheduler{}
+	m := NewSchedulerManager(fs, nil)
+	m.setChatFn(func(_ context.Context, _ string, _ string) error { return nil })
+	if _, err := m.Create(context.Background(), CreateScheduleRequest{
+		SessionID: "s1", CronExpr: "0 9 * * *", Input: "hi",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := fs.fns[0](context.Background(), fs.tasks[0]); err != nil {
+		t.Fatalf("task fn: %v", err)
+	}
+	if len(fs.tasks) != 2 {
+		t.Errorf("tasks = %d, want 2 (the repeating schedule must re-arm)", len(fs.tasks))
+	}
+}

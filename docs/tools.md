@@ -6,24 +6,48 @@ Tools give agents the ability to execute actions. The `Tool` interface embeds `p
 
 ## Built-in Tools
 
+There are **24** tool names registered in `pkg/agentscope/tool` (verify with
+`git grep -hoE 'ToolName:[[:space:]]+"[^"]+"' -- 'pkg/agentscope/tool/*.go' ':!*_test.go' | sort -u | wc -l`). Two
+more live outside that package: `kubectl_get` / `kubectl_logs` in `workspace/` and
+`DeviceTool` / `SensorTool` in `device/`.
+
 | Tool | Description | Safety |
 |------|-------------|--------|
-| `Bash` | Execute shell commands | AST-level injection detection, dangerous path protection, read-only command recognition |
-| `Read` | Read files with line range support | Path validation, line truncation (>2000 chars) |
-| `Write` | Create/overwrite files | Generates unified diff in response metadata |
-| `Edit` | Search/replace in files | Generates unified diff in response metadata |
+| `Bash` | Execute shell commands | AST-level injection detection, dangerous path protection, read-only command recognition, interpreter-attack detection |
+| `execute_shell_command` | Bare shell execution (`command` + optional `timeout`) | **None of `Bash`'s analysis.** No AST injection check, no interpreter-attack check, no read-only classification; `CheckPermissions` is the `BaseTool` passthrough. Register `Bash` unless you specifically need this shape |
+| `Read` | Read files with line numbers, `offset`/`limit` (default 2000 lines, 1 MB file cap). Images come back as base64 `DataBlock`s | Path validation, per-line truncation at 2000 chars, `MaxInlineImageBytes` (256 KB) image cap |
+| `view_text_file` | Bare text read (`path` or `file_path`), whole file as JSON | 1 MB cap and directory check, but it resolves with `filepath.Clean`/`Abs` only: it does **not** go through `resolvePath`, so it is **not** workspace-jailed and returns no images. Use `Read` when a jail is configured |
+| `Write` | Create/overwrite files | 10 MB input cap, atomic replacement, unified diff in response metadata |
+| `Edit` | Search/replace in files | Unified diff in response metadata |
+| `MultiEdit` | Apply several edits to one file | Unified diff in response metadata |
+| `ApplyPatch` | Apply a unified/patch-style diff | Unified diff in response metadata |
 | `Glob` | File pattern matching | Read-only |
 | `Grep` | Text search with regex | Read-only |
-| `ResetTools` | Activate/deactivate tool groups | Meta-tool |
-| `TaskCreate` | Create tasks with dependencies | Bidirectional blocks/blockedBy |
-| `TaskGet` | Get task details | Read-only |
-| `TaskList` | List all tasks | Read-only |
-| `TaskUpdate` | Update task status/fields | Dependency tracking |
+| `LSP` | Language-server queries | Read-only |
+| `NotebookEdit` | Edit Jupyter notebook cells | Mutates the notebook file |
+| `WebFetch` | Fetch a URL | SSRF guard |
+| `Agent` | Spawn a sub-agent | Creates agents; not read-only |
+| `ResetTools` | Activate/deactivate tool groups | Mutates the toolkit: changes which tools the agent can call. Not flagged `ReadOnly` |
+| `compress_context` | Summarize older context on the model's own initiative | Rewrites the agent's message history; not concurrency-safe |
+| `ScheduleCreate` / `ScheduleDelete` / `ScheduleList` / `ScheduleView` | Manage scheduled tasks | Need a `schedule.Scheduler` in the context |
+| `task_create` | Create tasks with dependencies | Mutates the task store; bidirectional blocks/blockedBy |
+| `task_get` | Get task details | Read-only |
+| `task_list` | List all tasks | Read-only |
+| `task_update` | Update task status/fields | Mutates the task store; dependency tracking |
 
-Use `tool.NewEnhancedToolkit()` to get all built-in tools, or select individually:
+`tool.NewEnhancedToolkit()` returns the coding-agent core: `Bash`, `Read`,
+`Write`, `Edit`, `MultiEdit`, `ApplyPatch`, `Glob` and `Grep`. That is 8 of the
+24. Everything else is opt-in:
 
 ```go
-tk := tool.NewToolkit(tool.BashTool(), tool.ReadTool(), tool.WriteTool())
+// The coding-agent core (8 tools):
+tk := tool.NewEnhancedToolkit()
+
+// Or pick individually:
+// tk := tool.NewToolkit(tool.BashTool(), tool.ReadTool(), tool.WriteTool())
+
+tk.AddGroup("web", tool.WebFetchTool()) // grouped: activate/deactivate together
+tk.ActivateGroup("web")
 ```
 
 ### Bash Tool Options
@@ -115,12 +139,24 @@ Control how text is split into chunks:
 
 ```go
 cfg := parser.ChunkConfig{
-    MaxChunkSize: 1000,  // max characters per chunk
-    Overlap:      200,   // overlap between consecutive chunks
+    MaxChunkSize: 1000, // in Unit
+    Overlap:      200,  // in Unit, must be < MaxChunkSize
+    Unit:         parser.ChunkUnitChars, // or parser.ChunkUnitApproxTokens
+}
+if err := cfg.Validate(); err != nil { // call at API boundaries instead of
+    return err                         // relying on ChunkText's silent fallbacks
 }
 
 p := &parser.TextParser{Cfg: cfg}
 ```
+
+`ChunkUnitApproxTokens` sizes chunks in approximate tokens using
+`approxTokenChars = 4` characters per token, a rule of thumb for English BPE. It
+under-counts CJK: one token is roughly one to one-and-a-half Chinese characters,
+so a chunk configured as 1000 approximate tokens holds about 1000 characters but
+closer to 700 to 1000 real tokens. CJK chunks therefore come out larger in token
+terms than configured. With a hard token ceiling and a CJK corpus, lower
+`MaxChunkSize`, or use `ChunkUnitChars` and size it yourself.
 
 ### Integration with RAG Pipeline
 
@@ -174,15 +210,26 @@ Combines embedding generation with Qdrant storage — no need to pre-compute vec
 
 ```go
 qdrantClient, _ := qdrant.NewClient(&qdrant.Config{Host: "localhost", Port: 6334})
-embedder, _ := embedding.NewOpenAIEmbeddingModel(...)
+embedder, _ := embedding.NewOpenAIEmbeddingModel(
+    &embedding.OpenAICompatConfig{APIKey: os.Getenv("OPENAI_API_KEY")})
 index, _ := rag.NewQdrantTextIndex(rag.QdrantTextConfig{
     Client:     qdrantClient,
     Collection: "my-docs",
-    Embedder:   embedder,
+    // EmbeddingModel and rag.Embedder are different interfaces: bridge them.
+    // Passing embedder directly does not compile.
+    Embedder:   embedding.AsEmbedder(embedder),
 })
 // AddDocuments automatically embeds text before storing
 index.AddDocuments(ctx, docs)
 ```
+
+### Result scores
+
+`Document.Score` is normalized so that higher means more relevant across every
+backend (Elasticsearch, Qdrant, MongoDB, Milvus). Milvus L2 distance is negated,
+so callers that negated it themselves must stop or they will double-negate.
+Comparing scores across backends does not require knowing which metric each one
+used.
 
 ### Reranked Retrieval
 
@@ -193,17 +240,41 @@ rerankedIdx := rag.NewRerankedIndex(baseIndex, myReranker, 3)
 results, _ := rerankedIdx.Query(ctx, "search query", 5)
 ```
 
+`RerankedIndex` overwrites `Document.Score` with the rerank score.
+
+### LLM-based reranking
+
+`rag.NewLLMReranker` turns any `ChatModel` into a `Reranker` via
+structured-output judging, with a per-(query, document) score cache:
+
+```go
+rr := rag.NewLLMReranker(cm,
+    rag.WithLLMRerankerDocChars(500),      // per-document excerpt, truncated by rune
+    rag.WithLLMRerankerPromptRunes(24000), // whole-prompt bound (default 24000)
+    rag.WithLLMRerankerCacheMax(1000),     // default 512; overflow drops the cache
+)
+idx := rag.NewRerankedIndex(baseIndex, rr, 3)
+```
+
+The prompt bound shrinks the per-document budget rather than dropping candidates,
+because a dropped candidate would score 0 and sink in the ranking. Document text
+is interpolated into the judge prompt as-is, so adversarial corpus content can
+influence scores. Compared with a real cross-encoder this costs more latency and
+tokens per uncached batch, and the scores are only as calibrated as the judge
+model.
+
 ## Reading images (upstream #2114)
 
-The Read tool returns image files (`.png .jpg .jpeg .gif .webp .bmp .tiff .ico`)
-as base64 `DataBlock` results instead of mojibake text, on both the host and
+The Read tool returns image files as base64 `DataBlock` results. The nine
+extensions in `imageMediaTypesByExt` are `.png .jpg .jpeg .gif .webp .bmp .tiff
+.tif .ico`. They come back as images instead of mojibake text, on both the host and
 workspace-backend paths. PDF page rendering is not supported (it would require
 a rasterizer dependency).
 
 Every image response also carries a leading text placeholder such as
-`[shot.png: image/png, 12345 bytes]`. The agent's tool pipeline is
-string-based, so without it an image-only result would reach the model as an
-empty string and read as "this file is empty".
+`[shot.png: image/png, 12345 bytes]`. The agent's tool pipeline is string-based,
+so without the placeholder an image-only result would reach the model as an empty
+string and read as an empty file.
 
 Whether the model actually sees the pixels depends on the provider:
 
@@ -212,14 +283,21 @@ Whether the model actually sees the pixels depends on the provider:
 | OpenAI **Responses** API | native `input_image` parts (upstream #2389) |
 | Chat Completions, Anthropic, Gemini, DashScope | the text placeholder only |
 
-There is no capability probe yet (upstream checks `model_input_types`), so
-Read cannot refuse to return an image for a model that cannot see it — it
-degrades to the placeholder.
+Nothing wires the model's capabilities into the tool layer yet, so Read cannot
+decline to return an image for a model that cannot see it, and the model gets the
+placeholder. The data is already in the repo: bundled model cards carry
+`InputTypes` and `ModelCard.SupportsImages()`, and every provider implements the
+`ModelNamer` interface that `model.ResolveContextSize` uses to look a card up.
+Upstream additionally checks a `model_input_types` field this repo does not
+have.
 
-Images larger than `tool.MaxInlineImageBytes` (256 KB) are reported as text
-instead of inlined. Base64 costs roughly its own file size in estimated tokens,
-so a single 1 MB screenshot would consume on the order of 250k tokens and
-trigger an immediate compression.
+Images larger than `tool.MaxInlineImageBytes` (256 KB of raw file bytes) are
+reported as text instead of inlined. The token estimator decodes base64 back to
+raw bytes and divides by four: `model.countTokensByBytes` adds `len(base64) * 3 / 4`
+and the total is then divided by 4. An inlined image therefore costs roughly
+fileSize/4 tokens. 256 KB is about 64k tokens, already a large fraction of a
+context window, and a 1 MB screenshot would be about 250k tokens and trigger an
+immediate compression.
 
 `ToolResultBlock.Output` is a plain `string` for text-only results and a
 `[]message.ContentBlock` when a tool returned something non-text. Use
@@ -243,22 +321,21 @@ instead of waiting for the automatic token-threshold compression.
 
 Three things to know:
 
-- **It compresses at a lower threshold than the automatic path**
-  (`ContextConfig.AgentDrivenTriggerRatio`, default `TriggerRatio/2`). With the
-  same threshold the agent would always compress first and the model could
-  never trigger the tool.
-- **Its reply is honest.** When the context is still below that threshold the
-  tool says nothing was compressed. Claiming success on a no-op teaches the
-  model that details are still available when they are not.
-- **It runs sequentially and needs no confirmation.** The tool rewrites the
-  shared message history, so it is `ConcurrencySafe: false` and never joins a
-  parallel tool batch, and it returns an allow decision so an ASK-mode
-  permission engine does not stall every model-initiated compression.
+- It compresses at a lower threshold than the automatic path
+  (`ContextConfig.AgentDrivenTriggerRatio`, default `TriggerRatio/2`). At the same
+  threshold the agent would always compress first and the model could never
+  trigger the tool.
+- The reply reports what happened. When the context is still below that threshold
+  the tool says nothing was compressed, rather than claiming success on a no-op.
+- It runs sequentially and needs no confirmation. The tool rewrites the shared
+  message history, so it is `ConcurrencySafe: false` and never joins a parallel
+  tool batch, and it returns an allow decision so an ASK-mode permission engine
+  does not stall every model-initiated compression.
 
-The compression split also keeps unfinished tool calls out of the summarized
-portion: when the model calls `compress_context` from inside the acting loop,
-the assistant message holding the batch's tool calls is already in the context,
-and summarizing it away would orphan the results that land moments later.
+The compression split keeps unfinished tool calls out of the summarized portion.
+When the model calls `compress_context` from inside the acting loop, the assistant
+message holding the batch's tool calls is already in the context, and summarizing
+it would orphan the results that land moments later.
 
 For custom pipelines, wire it manually with `tool.NewCompressContextTool(fn)`,
 where `fn` is a `tool.CompressFunc` returning a `tool.CompressionResult`:
@@ -283,11 +360,24 @@ uncoercible values reach JSON-Schema validation unchanged and fail loudly.
 
 ## Read cache in workspaces (upstream #2092)
 
-The read cache validates freshness against the filesystem that served the
-read: backends implementing the optional `tool.BackendStatter` interface
-(e.g. `workspace.ToolBackend` via POSIX stat) provide their own mtime, and
-backend writes/edits invalidate cached copies — so `Read` → `Edit` works
-inside Docker/K8s/E2B workspaces.
+The read cache validates freshness against the filesystem that served the read:
+backends implementing the optional `tool.BackendStatter` interface provide their
+own mtime (`workspace.ToolBackend` does, via POSIX `stat`), and backend writes and
+edits invalidate cached copies, so `Read` followed by `Edit` works in a
+workspace.
+
+The path passed to that `stat` must name the same file `ReadFile` read, and the
+correct spelling is backend-specific (`workspace.ExecPathResolver`):
+
+| Backend | Path spelling | Confidence |
+|---|---|---|
+| Docker, Daytona, AppleContainer | absolute in-sandbox path | Verified. `docker exec` has no `-w`, so a relative path would resolve against the image WORKDIR |
+| K8s, bubblewrap | caller-relative path | By design. bubblewrap binds its host root to `/`, so an absolute `BasePath`-joined path would name a file that does not exist inside the sandbox |
+| E2B, OpenSandbox | caller-relative path | Unverified. File operations and command execution go through two independent API channels, neither of which passes a working directory, so this is correct only if the service resolves both against the same base |
+| backends without `BackendStatter` | not applicable | Nothing is cached. A host `os.Stat` of a workspace-relative path is meaningless, or matches an unrelated host file |
+
+A wrong spelling is not merely a wasted exec. It supplies a freshness key for the
+wrong file, and the cache can then serve stale content as fresh.
 
 ## WASM Sandbox
 

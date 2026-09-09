@@ -28,16 +28,24 @@ func (e *CronValidationError) Error() string {
 	return fmt.Sprintf("invalid cron expression %q: %s", e.Expr, e.Reason)
 }
 
-// cronAliases maps @-prefixed shorthands to five-field expressions. The
-// @every_* forms were the only syntax the previous interval parser accepted;
-// they remain supported so existing callers keep working.
+// cronAliases maps @-prefixed shorthands to five-field expressions.
 //
-// BEHAVIOR CHANGE: @every_* used to mean "every N minutes after creation"
-// (schedule.Interval). They are now real cron expressions aligned to the
-// minute grid, so fire times shift: "@every_5m" created at 10:03 fires at
-// 10:05 (not 10:08), and "@every_12h" means "00:00 and 12:00" (not
-// "creation time + 12h"). Schedules persisted before this change keep their
-// stored expression but fire on the new grid.
+// This changes behavior in two independent ways. The previous parser was
+// parseCronInterval, which recognized only @hourly, @daily, @every_5m,
+// @every_10m and @every_30m. Everything else, including @every_1h, @every_12h,
+// @weekly, @yearly and any five-field expression such as "0 9 * * *", fell
+// through to `default: return time.Hour`. It also set schedule.Interval and left
+// RunAt zero, and InMemoryScheduler runs an Interval task immediately before
+// starting the ticker. So:
+//
+//	expression     old actual behavior            new behavior
+//	@every_5m      fire at once, then 10:08, ...  10:05, 10:10, ...
+//	@every_12h     fire at once, then hourly      00:00 and 12:00
+//	0 9 * * *      fire at once, then hourly      daily at 09:00
+//
+// The old-behavior column is the one operators notice: nothing fires at creation
+// any more. Schedules persisted before this change keep their stored expression
+// but fire on the new grid.
 var cronAliases = map[string]string{
 	"@hourly":    "0 * * * *",
 	"@daily":     "0 0 * * *",

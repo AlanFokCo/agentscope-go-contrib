@@ -4,7 +4,7 @@ This guide covers deploying agentscope-go on edge devices (Jetson Nano/Orin, Ras
 
 ## Cross-Compilation
 
-agentscope-go compiles to a single static binary with zero runtime dependencies. No CGO is required for any edge feature.
+With `CGO_ENABLED=0` agentscope-go builds to a single static binary with no shared-library dependencies, and no edge feature requires CGO. CI cross-compiles every package and example this way for linux/arm64, arm, mips64le and riscv64. That is a linking guarantee rather than a deployment one: the edge features still need their external services (an Ollama server for local inference, an MQTT broker for fleet coordination) and kernel support for the device connectors (serial chardev, SocketCAN, gpiochip, i2c-dev).
 
 ### ARM64 (Jetson, RPi 4/5, Apple Silicon)
 
@@ -32,7 +32,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go build -ldflags="-s -w" -o agent ./ex
 
 ## Binary Size Optimization
 
-Target: stripped edge binary under 18MB.
+CI enforces an 18 MB ceiling on the stripped linux/arm64 `examples/edge_offline` binary. The current build is about 6 MB, so there is room for optional dependencies before the gate trips.
 
 | Technique | Savings |
 |-----------|---------|
