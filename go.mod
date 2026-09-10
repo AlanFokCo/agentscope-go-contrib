@@ -31,3 +31,16 @@ require (
 	google.golang.org/grpc v1.83.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+// v2.1.0 (2026-07-06) and v2.1.1 (2026-08-10) were tagged and later deleted from
+// the repository, but the module proxy serves deleted versions indefinitely.
+// Neither was a real release, yet both outrank the v2.0.x line, so an
+// unqualified `@latest` query resolves to v2.1.1 (the proxy's own /@latest
+// endpoint reports v2.0.10; the go command takes the version-list maximum
+// instead). Retractions are read from the latest version's go.mod, so these take
+// effect only in a release higher than v2.1.1. Forensics are in the commit that
+// added them.
+retract (
+	v2.1.1 // second tag on the commit released as v2.0.6; deleted from the repository
+	v2.1.0 // 2026-07-06 commit, older than v2.0.4; deleted from the repository
+)
