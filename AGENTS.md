@@ -9,7 +9,7 @@ A Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope
 - **Module path: `github.com/agentscope-ai/agentscope-go/v2`** (v2+ line). Imports use `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`. Latest tag: **`v2.0.10`**.
 - Library under `pkg/agentscope/`; runnable demos under `examples/`.
 - `go.mod` says `go 1.25.0` — keep code **Go 1.25+ compatible** (the minimum version declared in `go.mod`).
-- Python reference (for design parity): the upstream repo, <https://github.com/agentscope-ai/agentscope>. The maintainer's machine keeps a checkout next to this one (`../agentscope`); do not rely on an absolute path.
+- Python reference (for design parity): the upstream repo, <https://github.com/agentscope-ai/agentscope>.
 
 ## Build / test / lint
 
@@ -25,32 +25,15 @@ CI (`.github/workflows/ci.yml`) is a 3-OS matrix — **ubuntu / macos / windows*
 - shell-specific Unix tests guard with `if runtime.GOOS == "windows" { t.Skip("requires Unix shell") }`;
 - sandbox/workspace-relative paths use the `path` package (forward slash), **not** `filepath` (which is `\` on Windows).
 
-## Commit / deploy workflow (maintainer-local; read the scope first)
+## Contributing workflow
 
-> Scope: this section describes the maintainer's own setup, where the git remote
-> lives on a private build host reachable as `ssh root@builder`. It does not apply
-> to contributors; see [CONTRIBUTING.md](CONTRIBUTING.md) for the fork-and-PR
-> flow. If `ssh root@builder` does not resolve for you, ignore this section and
-> commit normally. The Quality Gate section below applies to everyone.
+Fork-and-PR flow: see [CONTRIBUTING.md](CONTRIBUTING.md). The Quality Gate
+section below applies to every change, for maintainers and contributors alike.
 
-Git lives on **builder** (`root@builder:/opt/Projects/agentscope-go`), not in the local checkout. Never `git commit`/`push` locally.
-
-1. Edit locally.
-2. **Check builder is clean first**: `ssh root@builder 'cd /opt/Projects/agentscope-go && git branch --show-current && git status --short'`. The maintainer sometimes works directly on builder — don't rsync over uncommitted edits, and note which branch is checked out (commits land on whatever is checked out).
-3. `rsync` only the files you changed (see below), then verify on builder:
-   `ssh root@builder 'cd /opt/Projects/agentscope-go && export PATH=$PATH:/usr/local/go/bin && go build ./... && go vet ./... && go test -race -count=1 ./...'`
-4. `git add ... && git commit -F <msgfile> && git push` **on builder**.
-
-Gotchas that will bite you:
-- **Local git HEAD lags builder.** Don't trust local `git diff`/`status` to enumerate your changes. Rsync your edited files, then `git status` on builder shows the true diff against HEAD.
-- **`vendor/` is `.gitignore`d.** Adding a dependency: on builder run `go get <pkg> && go mod tidy && go mod vendor`, then commit **only `go.mod` + `go.sum`**. CI restores deps from the proxy.
-- **Tag pushes/deletes need `git push --no-verify`.** The pre-push AK-leak-scan hook errors on tag refs (`invalid local oid`); the commit was already scanned on the branch push, so bypassing for tags is safe.
-- **Commit messages: no "Claude"/AI mentions, no `Co-Authored-By`.** Use `git commit -F <file>` (rsync a message file) to dodge ssh quoting issues.
-
-Rsync example (single file, preserving path):
-```bash
-rsync -azR pkg/agentscope/model/model.go root@builder:/opt/Projects/agentscope-go/
-```
+- `vendor/` is `.gitignore`d. Add a dependency with `go get <pkg> && go mod tidy`
+  and commit **only `go.mod` + `go.sum`**; CI restores deps from the module proxy.
+- Commit messages must not mention AI assistants and must not carry
+  `Co-Authored-By` trailers for them.
 
 ## Current state (2026-09)
 

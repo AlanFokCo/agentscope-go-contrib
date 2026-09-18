@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 See `STABILITY.md` for the API-stability policy, stability tiers, and the production-hardening status (what's done, what's open) — read it before large changes.
 
-Python reference code is at `/Users/alanfokco/Github/agentscope/` (main branch). When adding features, check the Python implementation first for design consistency.
+When adding features, check the Python implementation first for design consistency.
 
 `go.mod` declares `go 1.25.0`. Keep code compatible with Go 1.25+ (the minimum version in `go.mod`).
 
@@ -55,16 +55,13 @@ go run ./examples/multiagent
 
 LLM-backed examples need one of: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE_URL`). The `loadChatModelFromEnv` helpers inside the examples pick a backend in the order Anthropic → DashScope → OpenAI.
 
-## Deployment / commit workflow (important)
+## Commit workflow
 
-Git lives on **builder** (`root@builder:/opt/Projects/agentscope-go`), not locally. Do NOT commit or push from the local checkout — edit locally, `rsync` to builder, then `git add/commit/push` **on builder**. Hard-won gotchas:
-
-- **The local git HEAD is behind builder** — do not use local `git diff`/`git status` to figure out "what I changed" (it over-reports). Instead: rsync only the files you actually edited, then run `git status` **on builder** — it shows exactly your changes against the real HEAD.
-- **Check the tree is clean before every rsync.** The maintainer sometimes works directly on builder (feature branches, uncommitted edits). Run `ssh root@builder 'cd .../agentscope-go && git branch --show-current && git status --short'` first; if there are uncommitted changes, don't rsync over them — coordinate. Also note **which branch** is checked out (commits land on whatever is checked out).
-- **`vendor/` is `.gitignore`d** (local convenience, not committed). Adding a dependency: on builder run `go get <pkg> && go mod tidy && go mod vendor`, then commit **`go.mod` + `go.sum`** (vendor is not committed; CI restores deps from the module proxy).
-- **Tag pushes need `--no-verify`.** The builder pre-push hook runs an AK-leak scanner that errors on tag refs (`invalid local oid`). For `git push origin <tag>` / tag deletes, use `git push --no-verify ...`. The commit content was already scanned on the `main` push, so this is safe.
-- **Commit messages must not mention Claude/AI** or include `Co-Authored-By`. Prefer committing the message via `git commit -F <file>` (rsync a message file) to avoid ssh quoting issues.
-- Verify on builder before committing: `go build ./... && go build ./examples/... && go vet ./... && go test -race -count=1 ./...` and `golangci-lint run ./...` (install via `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`). CI is a 3-OS matrix (ubuntu/macos/**windows**) — Windows exercises the PowerShell/Cmd code paths, so shell-specific Unix tests use `if runtime.GOOS == "windows" { t.Skip("requires Unix shell") }`, and sandbox/workspace-relative paths use `path` (forward slash), not `filepath`.
+Use the fork-and-PR flow in `CONTRIBUTING.md`; the Quality Gate in `AGENTS.md`
+applies to every change. `vendor/` is `.gitignore`d — add dependencies with
+`go get <pkg> && go mod tidy` and commit only `go.mod` + `go.sum` (CI restores
+them from the module proxy). Commit messages must not mention AI assistants or
+carry `Co-Authored-By` trailers for them.
 
 ## Architecture
 
