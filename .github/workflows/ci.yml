@@ -35,9 +35,21 @@ jobs:
 
       - name: Coverage
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        env:
+          # Statement-coverage floor for the library (./pkg/...). Ratchet only:
+          # raise it in the same PR that raises coverage, never lower it.
+          # Keep in sync with `make cover-check` and AGENTS.md.
+          COVERAGE_MIN: '65.0'
         run: |
+          # Two runs on purpose: coverage is attributed per tested package, so
+          # the ./pkg/... gate needs its own run; reusing the ./... profile or
+          # -coverpkg would measure a different (cross-package) metric.
           go test -coverprofile=coverage.out ./... >/dev/null
-          go tool cover -func=coverage.out | tail -1
+          printf "total ./...     : "; go tool cover -func=coverage.out | tail -1
+          go test -coverprofile=coverage-pkg.out ./pkg/... >/dev/null
+          total=$(go tool cover -func=coverage-pkg.out | tail -1 | awk '{print $NF}' | tr -d '%')
+          echo "total ./pkg/... : ${total}% (floor ${COVERAGE_MIN}%)"
+          awk -v t="$total" -v min="$COVERAGE_MIN" 'BEGIN { if (t+0 < min+0) { print "ERROR: coverage below floor"; exit 1 } }'
 
       - name: Fuzz smoke (safety parsers)
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'

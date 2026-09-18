@@ -1,119 +1,158 @@
 # AGENTS.md
 
-Handoff guide for coding agents (and humans) working on **agentscope-go**. Read this first, then `CLAUDE.md` for the full architecture and `STABILITY.md` for what's shipped vs. open. `CLAUDE.md` is tracked and published; the `.gitignore` entry that used to list it had no effect on a tracked file and has been removed.
+Handoff guide for coding agents (and humans) contributing to **agentscope-go**,
+the Go implementation of the AgentScope framework. Read this first; then
+`CLAUDE.md` for the architecture map and `STABILITY.md` for stability tiers and
+what is shipped vs. open.
+
+| Topic | Where |
+|---|---|
+| Architecture & code conventions | `CLAUDE.md` |
+| Stability tiers, production-hardening status | `STABILITY.md` |
+| Release notes | `CHANGELOG.md` (Keep a Changelog) |
+| Contributing & PR flow | `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md` |
+| Code of conduct | `CODE_OF_CONDUCT.md` |
+| Security reports (never a public issue) | `SECURITY.md` → `security@agentscope.io` |
+| Deep dives (deployment, edge, tools, …) | `docs/` |
 
 ## What this is
 
-A Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope) multi-agent LLM framework.
+- Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope)
+  multi-agent LLM framework, developed in the `agentscope-ai` community org.
+- Module path **`github.com/agentscope-ai/agentscope-go/v2`**; the `/v2` suffix
+  is part of every import path. Library under `pkg/agentscope/`, runnable demos
+  under `examples/` (54 directories, each its own `main` package).
+- `go.mod` declares `go 1.25.0` — keep code **Go 1.25+ compatible**. The CI test
+  matrix pins Go 1.25; cross-compile jobs use `go-version-file: go.mod`.
+- Licensed Apache-2.0. Source files carry **no** SPDX/license headers by policy;
+  do not add any.
+- Design parity: when adding a feature that exists upstream, check the Python
+  implementation first.
 
-- **Module path: `github.com/agentscope-ai/agentscope-go/v2`** (v2+ line). Imports use `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`. Latest tag: **`v2.0.10`**.
-- Library under `pkg/agentscope/`; runnable demos under `examples/`.
-- `go.mod` says `go 1.25.0` — keep code **Go 1.25+ compatible** (the minimum version declared in `go.mod`).
-- Python reference (for design parity): the upstream repo, <https://github.com/agentscope-ai/agentscope>.
-
-## Build / test / lint
+## Build / test / lint / coverage
 
 ```bash
+make check                       # gofmt -s + go mod tidy + vet + build + test (-race)
 go build ./... && go build ./examples/...
 go vet ./...
-go test -race -count=1 ./...                       # CI runs with -race
-golangci-lint run ./...                             # v2; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-go test ./pkg/agentscope/tool -run TestName -v      # single test
+go test -race -count=1 ./...     # what CI runs
+golangci-lint run ./...          # v2; go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+go test ./pkg/agentscope/tool -run TestName -v   # single test
+
+make cover                       # statement-coverage totals for ./... and ./pkg/...
+make cover-check                 # fails if ./pkg/... coverage < COVERAGE_MIN (default 65.0)
 ```
 
-CI (`.github/workflows/ci.yml`) is a 3-OS matrix — **ubuntu / macos / windows** — plus lint, a loop benchmark, a coverage step, and a 30s fuzz smoke. Windows exercises the PowerShell/Cmd paths, so:
-- shell-specific Unix tests guard with `if runtime.GOOS == "windows" { t.Skip("requires Unix shell") }`;
-- sandbox/workspace-relative paths use the `path` package (forward slash), **not** `filepath` (which is `\` on Windows).
+CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR: a
+3-OS matrix (**ubuntu / macos / windows**) with build, `go vet` and
+`go test -race -count=1`; the **coverage gate**, the 30 s fuzz smoke on the two
+safety parsers and the loop benchmark run on the ubuntu / Go 1.25 cell only;
+plus a linux cross-compile matrix
+(arm64/arm/mips64le/riscv64) with an **18 MiB cap** on the stripped
+`examples/edge_offline` arm64 binary; and a `golangci-lint` job. Windows
+exercises the PowerShell/Cmd code paths, so:
+
+- shell-specific Unix tests guard with
+  `if runtime.GOOS == "windows" { t.Skip("requires Unix shell") }`;
+- sandbox/workspace-relative paths use the `path` package (forward slash),
+  **not** `filepath` (which is `\` on Windows).
+
+### Coverage policy (mandatory)
+
+- CI fails when statement coverage of `./pkg/...` drops below `COVERAGE_MIN`
+  (**65.0 %**, set in `.github/workflows/ci.yml` and mirrored as the
+  `make cover-check` default — keep the two in sync). The floor is a ratchet:
+  raise it in the same PR that raises coverage; a PR that lowers it needs an
+  explicit justification and is a blocking finding for reviewers.
+- Baseline when the gate was introduced (2026-09, `go test -coverprofile`, no
+  `-race`; reproduce with `make cover`): **≈59.6 %** for `./...` and **≈66.6 %**
+  for `./pkg/...`. Coverage is attributed per tested package, so the gate runs
+  `./pkg/...` separately rather than reusing the `./...` profile or
+  `-coverpkg` (which would fold in cross-package attribution and report ≈68.3 %
+  instead). `examples/` are demos with no tests by design and are excluded from
+  the gate; they must still compile (`go build ./examples/...`).
+- Every behavior change ships with a test (TDD: write the failing test, watch it
+  fail, then implement). New exported API in a package that currently has no
+  tests must add tests for it; the library packages without any test file
+  today are `a2a`, `memory`, `realtime`, `session`, `tune`, `types`
+  (declarations only) and `messagebus/mqtt` (behind `//go:build mqtt`, hence
+  invisible to the default build/test/coverage run).
+- PR descriptions state the coverage of touched packages before/after
+  (`go tool cover -func=cover.out | grep <pkg>`); the PR checklist enforces it.
+- Touching `tool/bash_parser.go` or the safety checks also requires
+  `go test -run=x -fuzz=FuzzBashSafety -fuzztime=30s ./pkg/agentscope/tool/`
+  (and `FuzzUnmarshalContentBlocks` for `message/` content-block parsing).
 
 ## Contributing workflow
 
-Fork-and-PR flow: see [CONTRIBUTING.md](CONTRIBUTING.md). The Quality Gate
-section below applies to every change, for maintainers and contributors alike.
+Fork the repository, branch from `main` as `feat/…` or `fix/…`, and open a PR
+against `main` with `.github/PULL_REQUEST_TEMPLATE.md`; `CONTRIBUTING.md` has
+the full flow. Every PR must:
 
-- `vendor/` is `.gitignore`d. Add a dependency with `go get <pkg> && go mod tidy`
-  and commit **only `go.mod` + `go.sum`**; CI restores deps from the module proxy.
-- Commit messages must not mention AI assistants and must not carry
-  `Co-Authored-By` trailers for them.
+- pass the Quality Gate below and tick the PR checklist (build, vet, test,
+  `-race`, lint, coverage, docs);
+- declare breaking changes explicitly in the PR description, with a migration
+  path (`STABILITY.md` defines which packages may change and how);
+- update documentation in the same commit whenever public API or behavior
+  changes: `README.md` (including the examples table), `README.es-ES.md` (same
+  facts, same commit), `docs/`, the `CLAUDE.md` architecture map, and a
+  `CHANGELOG.md` entry under `[Unreleased]`;
+- use Conventional-Commit-style subjects, as this repo already does
+  (`fix(tool): …`, `docs: …`, `refactor(model)!: …`, `!` marking breaking).
 
-## Current state (2026-09)
+Commit messages must not mention AI assistants and must not carry
+`Co-Authored-By` trailers for them.
 
-Go framework capabilities **plus** a production-hardening pass (see `STABILITY.md` for the full list). Highlights already shipped: bash-redirect safety, workspace jail + Docker/E2B backend routing for file/shell tools, WebFetch SSRF guard, MCP env isolation, per-tool timeout/result caps, 429/Retry-After+jitter retries, ordered fallback chain, single-probe circuit breaker, streaming-error propagation (`ChatResponse.Error`/`StopReason`), ctx-aware event emission (goroutine-leak fixes), atomic file writes, token/duration budget enforcement, HTTP hardening + `/healthz`+`/readyz`+`/metrics`, a Prometheus metrics provider, JSON-Schema tool-input validation, MultiEdit + ApplyPatch tools, and fuzz targets. All green under `-race` and golangci-lint.
+Dependencies: `vendor/` is `.gitignore`d and never committed. Add a dependency
+with `go get <pkg> && go mod tidy` and commit **only `go.mod` + `go.sum`**; CI
+restores deps from the module proxy. Prefer Apache-2.0/MIT/BSD-compatible
+licenses and call out every new dependency in the PR description.
 
-Recent additions (2026-08):
-- **Process-group isolation** (`proc_unix.go`): on Unix, child processes are killed as a group on timeout, reducing orphaned children; this is not a process-count limit. Windows does not use this process-group mechanism.
-- **Interpreter attack detection** (`CheckInterpreterAttack`): blocks dangerous API calls hidden inside `python -c`, `node -e`, `perl -e`, etc.
-- **Write hardening**: the local Write tool has a 10 MB input cap, atomic replacement (`fsutil.WriteFileAtomic`), and executable-extension bypass-immune ASK; Edit/MultiEdit/ApplyPatch and backend persistence differ.
-- **Sandbox Policy checks** (`orchestrator.enforceSandboxPolicy`): selected built-in names and inputs are checked. Custom tools, alternate call-name casing, shell/network access, and most resource limits are not fully covered; configuring Policy alone does not route calls through Sandbox.Execute.
-- **Audit logging** (`audit/`): structured `audit.Logger` interface with InMemory/File/Multi/Nop implementations; orchestrator records every tool execution, permission denial, and policy decision.
-- **Sandbox execution events** (`event/`): `tool_exec_start`, `tool_exec_end`, `tool_policy_denied` — visibility into what happens inside the execution layer.
-- **Eval harness** (`replay/eval.go`): `Scorer` interface with 5 built-in scorers (ExactMatch, Contains, JSONField, TextContains, Composite), `EvalTape()` runner, `AssertTape(t, ...)` go-test helper for regression testing.
-- **Observed-cost guard** (`middleware/cost_tracker.go`): `WithMaxCostUSD(limit)` blocks subsequent calls after accounted cost reaches the threshold; it does not reserve the next call's cost and can overshoot. `WithExchangeRate("CNY", 7.2)` converts totals for display.
-- **Output guardrails** (`middleware/guardrail.go`): `GuardrailMiddleware` with Block/Redact/Warn actions + 4 built-in rules (KeywordBlock, KeywordRedact, MaxLength, Custom).
-- **Reranker** (`rag/rerank.go`): `Reranker` interface + `RerankedIndex` wrapper for precision-improving two-stage retrieval.
-- **RedisFullStorage** (`storage/redis_full.go`): full `FullStorage` implementation over Redis (28 methods) with reverse-index message lookup.
-- **SecretStr adoption**: `UnmarshalJSON` + `ResolveAPIKey()` helper; `SecretAPIKey` dual-field across all 22 config structs.
-- **`exception` → `errors` migration**: tool error types moved to `errors/tool_errors.go`; `AgentError.Is()` matches sentinels by Code; `AgentError.AgentMessage()` bridges LLM-facing/operator-facing errors. `exception/` package removed.
+## Releases, versions, security
 
-- **K8s workspace hardening** (`workspace/k8s.go`): `PodSecurityContext` (RunAsNonRoot/User/Group/FSGroup), `ResourceRequirements` (CPU/Memory limits+requests), `ServiceAccountName`, Labels/Annotations, `PodTTLSeconds` (activeDeadlineSeconds anti-leak), `ImagePullPolicy`, `DisableServiceAccount`, `SecretToken` (SecretStr). Bug fixes: duplicate timeout, GNU find portability, `buildPodManifest()` testability extraction.
-- **K8s cluster tools** (`workspace/k8s_tools.go`): `NewKubectlGetTool` (15 resource types, secrets BLOCKED), `NewKubectlLogTool` (tail/since/container). Read-only, 30s timeout, kubectl shell-out (no client-go dep).
+- Tags are cut from `main` and follow semver on the `/v2` module line; each tag
+  promotes the `[Unreleased]` section of `CHANGELOG.md` into a version section.
+- Supported versions and the security process live in `SECURITY.md`: report
+  vulnerabilities privately to `security@agentscope.io`, never as a public issue.
+- Docs must not hard-code the release tag (use
+  `git describe --tags --abbrev=0` when you need it); the only places that name
+  a tag are the `SECURITY.md` supported-versions table and the `STABILITY.md`
+  versioning note, which are refreshed when a tag is cut.
 
-Open work remains in sandbox enforcement, session-state isolation/restore, persistence coverage, and cost reservation. See `STABILITY.md` and `docs/adversarial-hardening.md`.
+## Code conventions (summary; full list in `CLAUDE.md`)
 
-Recent additions (2026-09) — **harness engineering batch** (evaluation, regression defense, cost governance, resilience, crash recovery):
-- **Flight recorder** (`replay/`): ring + per-entry size limits, atomic dump-on-error tapes, redaction hook; entries carry `reply_id`/`usage`. Reply IDs correlate through MiddleContext into recorders, audit entries, and tracing spans (`tracing.LateAttributer`).
-- **`event/streamcheck`**: single implementation of event-stream invariants; `agenttest` delegates to it; opt-in `middleware.NewStreamValidator` for development.
-- **Provider contract wall** (`providercontract/`, test-only): 6 provider harnesses asserting usage accounting, streaming lifecycle, truncation surfacing, ctx-cancel, error taxonomy, thinking wire formats.
-- **Golden replay seeds** (`agent/testdata/golden/`): regenerate with `-golden-update`.
-- **Runtime defenses**: `middleware.NewRepetitionBreaker` (tool-call spin detection; per-reply streaks), `middleware.NewReplyWatchdog` (wall-clock + idle timeouts), cost governance (`model.ResolvePrice` overlay, `CostLedger` + `NewCostTracking`, `NewReplyCostBudget` with soft warning + hard `ErrBudgetExceeded` stop).
-- **Evaluation kit** (`replay/evalkit/`): YAML task suites, pinned-sampling runner, scorers incl. LLM judge with caching, multi-turn tasks, Markdown suite reports, A/B `Compare`.
-- **Run logs**: `middleware.NewRunJSONL` + `replay.ParseRunLog`/`DiffRunLogs` (LCS alignment with truncation flag); `examples/replayview` + `examples/rundiff`.
-- **Crash recovery**: `agent.WithStateSaver` checkpoints at batch boundaries/park points (and right after resumed calls execute); `agent.LoadCheckpoint` resumes and re-drives pending HITL/external handshakes. Contract: a crash mid-batch re-executes the whole batch (not exactly-once).
-- **Fault injection** (`agenttest/faults/`) and **bench v2** (`Battery` + `Baseline` + `CheckBaseline` regression detection); `model.WithSeed` pass-through for OpenAI-family providers.
-- **Console** (`console/`, Phase 1): `Renderer` (event stream → terminal, 3 verbosity levels, `LastMsg`) + `Launch` (interactive chat with tool-call confirmation and Ctrl+C interruption); `examples/console`.
-- **Channels** (`channel/`, Phase 2): channel gateway + normalised inbound events + confirmation round-trips; `channel/dingtalk` DingTalk robot (official Stream SDK inbound, session-webhook Markdown outbound, text-mode confirmations); `examples/dingtalk_channel`. Dep added: `dingtalk-stream-sdk-go`.
-- **Hub built-in sources** (`hub/`, Phase 3): `GitHubMCPRegistry` (GitHub MCP registry — `runtime_hint`-driven stdio commands, auth-header install inputs, atomic install preserving `${KEY}` placeholders) + `ClawHub` (owner-scoped skill IDs, zip install with zip-slip/zip-bomb protection and slug validation).
-- **Workspace skill isolation** (`skill/`, Phase 3): per-agent skill partitions (`skills/<agent_id>/`, `.seed` template equipped once, idempotent legacy migration) via `skill.Store`; `SkillManager` agent partitions + `PurgeAgent`; `/api/workspace/skill` routes implemented; sessions carry `active_skills`.
-- **Agentic memory** (`middleware/memory/`, Phase 3): `FileStore` (JSONL-persisted `MemoryStore` — crash-tolerant load, atomic delete) + `AgenticMemoryMiddleware` (file-based memory: Auto-Memory instructions + token-budgeted `MEMORY.md` snapshot in the system prompt); app `WorkspaceAgentFactory` hook hands the session workspace to agent factories.
-- **Workspace sharing + artifacts** (`app/`, Phase 3): session↔workspace bindings with refcounts (`WorkspaceManager.Share`/`BoundWorkspaceID`/`GetByID`/`RefCount`), `POST /api/workspace/share` + read-only artifact routes `GET /api/workspace/{id}/list_dir|read_file` (pre-read size cap, jail-enforced); `LocalWorkspace` jail made separator-aware (sibling-prefix escape closed) and symlink-aware (escaping links rejected).
+- `context.Context` first arg; return `(T, error)` — don't panic (exceptions:
+  `message.NewMsg`, `agent.NewUnifiedAgent` panic on programmer error).
+- Interfaces + embeddable `BaseXxx` defaults; functional options
+  (`opts ...XxxOption`).
+- Streaming = `<-chan T`: deltas then a final `IsLast=true`, `defer close(ch)`;
+  sends must be ctx-aware.
+- Errors: structured `errors.AgentError` + sentinels (`errors.Is`/`As` via
+  `AgentError.Is()` matching by `Code`); `IsRetryableError` honors the typed
+  retryable flag; `AgentMessage()` for LLM-facing messages.
+- Log through `agentscope.Log()`; `internal/httpx` already logs transport
+  retries — don't double-log around it.
 
-Recent additions (2026-09, sync batch 2) — **Python 8/14–9/7 window port** (per-PR mapping in STABILITY.md):
-- **Fixes:** real cron validation + minute-grid re-arm scheduling (`app/cron.go`, #2442), wakeup send-under-lock race fix (#2476), xAI reasoning-token usage (#2461), Anthropic `message_stop` truncation guard (#2350), Responses encrypted-reasoning replay + complete multi-tool-call/result conversion (#2426), Gemini nullable type arrays (#2437), tracing `finish_reasons` incl. `interrupted` (#2450), `ContextConfig.MaxImageNum` (#2362), agentic-memory instruction text fix (#2513), backend-aware permission shell pinning (`permission.Context.TargetShell` + `tool.BackendPermissionContext`, #2366 residual).
-- **Tool execution:** optional `tool.BackendStatter` + backend-mtime read cache (#2092), Read returns image DataBlocks (#2114), schema-guided argument coercion on every call (`jsonx.RepairWithSchema`/`CoerceToSchema`, #2496), RepetitionBreaker error-streak dimension (#1816), compression usage accounting (`GenerateStructuredOutputWithUsage` + model-call-end event, #2433), forced tools-disabled finalization call at max iters (#2443).
-- **RAG:** `Document.Score` normalized higher-is-better across ES/Qdrant/MongoDB/Milvus (#2486), `LLMReranker` over any ChatModel with score cache (#1975), explicit `ChunkConfig.Unit`/`Validate()` (#2083 core).
-- **Features:** `compress_context` agent-driven compression tool (#2143), native multimodal tool outputs for the Responses API (#2389).
-- **Not ported (documented):** GoalPipeline (#2428), team enhancements (#2386/#2379), full A2AAgent protocol (#2142, needs SDK decision), workspace prewarm pool (#1755, needs isolation-policy/storage/lifecycle prerequisites), channel/app Phase E items, MCP SSE transport (#2311, capability gap — needs its own project).
+## Quality Gate: evaluator adversarial review (MANDATORY)
 
-## Conventions (summary; full list in CLAUDE.md)
+Before any commit and push, the following MUST be verified through an evaluator
+(adversarial reviewer):
 
-- `context.Context` first arg; return `(T, error)` — don't panic (exceptions: `message.NewMsg`, `agent.NewUnifiedAgent` panic on programmer error).
-- Interfaces + embeddable `BaseXxx` defaults; functional options (`opts ...XxxOption`).
-- Streaming = `<-chan T`, deltas then final `IsLast=true`, `defer close(ch)`; sends should be ctx-aware.
-- **TDD** for behavior changes: write the failing test, watch it fail, then implement.
-- New example → own `examples/<name>/main.go` + add to `README.md` (CI builds all examples).
-- Errors: structured `errors.AgentError` + sentinels (`errors.Is`/`As` via `AgentError.Is()` matching by `Code`); `IsRetryableError` honors the typed retryable flag; `AgentMessage()` for LLM-facing messages.
-- `golangci-lint run ./...` must pass before every commit (CI gates on it).
-
-## Quality Gate: Evaluator Adversarial Review (MANDATORY)
-
-Before any commit and push, the following MUST be verified through an evaluator (adversarial reviewer):
-
-1. **Code changes**: Run evaluator to adversarially review all new/modified code for:
-   - Logic bugs, race conditions, nil panics
-   - Missing edge cases and error handling
-   - API misuse or design flaws
-   - Security vulnerabilities
-
-2. **Documentation changes**: Run evaluator to verify:
-   - All code examples compile correctly against actual source
-   - All API references (function names, signatures, struct fields) match reality
-   - All numeric claims (counts, versions) are accurate
-   - No broken links or stale references
-
+1. **Code changes** — review all new/modified code for logic bugs, race
+   conditions, nil panics, missing edge cases and error handling, API misuse or
+   design flaws, and security vulnerabilities.
+2. **Documentation changes** — verify every code example compiles against the
+   real source, every API reference (names, signatures, struct fields) matches
+   reality, every numeric claim (counts, versions, coverage) is accurate, and
+   no link or reference is stale.
 3. **Commit criteria** — a commit is allowed ONLY when:
-   - `go build ./...` passes
+   - `go build ./...` and `go build ./examples/...` pass
    - `go vet ./...` passes
-   - `go test -race -count=1 ./...` passes (or affected packages)
+   - `go test -race -count=1 ./...` passes (or the affected packages)
    - `golangci-lint run ./...` shows 0 issues
-   - Evaluator adversarial review returns PASS (no HIGH-severity findings)
+   - `make cover-check` passes and touched packages lost no coverage
+   - the fuzz smoke was re-run when safety parsers changed
+   - the evaluator returns PASS (no HIGH-severity findings)
 
-Skipping the evaluator review is NOT acceptable. If time is constrained, at minimum run the evaluator on the specific packages modified.
+Skipping the evaluator review is NOT acceptable. If time is constrained, at
+minimum run the evaluator on the specific packages modified.

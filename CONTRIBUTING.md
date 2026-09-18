@@ -50,6 +50,11 @@ consistent.
    go test -fuzz=FuzzBashSafety -fuzztime=30s ./pkg/agentscope/tool/
    ```
 
+   Coverage is a commit gate as well: `make cover-check` fails when statement
+   coverage of `./pkg/...` drops below `COVERAGE_MIN` (value and rationale in
+   `.github/workflows/ci.yml` and `AGENTS.md`). The PR checklist asks for the
+   coverage of touched packages before and after the change.
+
    Some examples require external services:
 
    - LLMs:

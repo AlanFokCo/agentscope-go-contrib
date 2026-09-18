@@ -1,67 +1,49 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for coding agents (Claude Code, Codex and friends) and human
+contributors working in this repository. Workflow, coverage and review
+policy live in `AGENTS.md`; this file is the architecture and
+code-convention map.
 
 ## Project
 
-`agentscope-go` is a Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope) multi-agent LLM framework. The module path is **`github.com/agentscope-ai/agentscope-go/v2`** (v2+ line): internal and consumer imports use `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`. Latest release tag: **`v2.0.10`**. All library code lives under `pkg/agentscope/`; runnable demos live under `examples/`.
+`agentscope-go` is the Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope) multi-agent LLM framework, developed in the `agentscope-ai` community org under the Apache-2.0 license. The module path is **`github.com/agentscope-ai/agentscope-go/v2`** (the `/v2` suffix is part of every import path); all library code lives under `pkg/agentscope/`, runnable demos under `examples/`. `go.mod` declares `go 1.25.0`.
 
-See `STABILITY.md` for the API-stability policy, stability tiers, and the production-hardening status (what's done, what's open) — read it before large changes.
-
-When adding features, check the Python implementation first for design consistency.
-
-`go.mod` declares `go 1.25.0`. Keep code compatible with Go 1.25+ (the minimum version in `go.mod`).
+Read `AGENTS.md` for the contribution workflow, coverage policy and mandatory quality gate, and `STABILITY.md` for stability tiers and the production-hardening status before large changes. When a feature exists upstream, check the Python implementation first for design consistency.
 
 ## Common commands
 
 ```bash
-# Build everything (library + every example main).
-go build ./...
-go build ./examples/...
-
-# Static checks and tests (matches CI in .github/workflows/ci.yml).
+# Everything CI does, locally:
+make check                      # gofmt -s + go mod tidy + vet + build + test (-race)
+go build ./... && go build ./examples/...
 go vet ./...
-go test ./...
+go test -race -count=1 ./...
+golangci-lint run ./...         # v2
 
-# Run a single package's tests, or a single test:
+# Single package / single test:
 go test ./pkg/agentscope/pipeline -run TestName -v
 
-# Run any example (each has its own main package).
+# Coverage — CI gates statement coverage of ./pkg/... at COVERAGE_MIN (65.0%):
+make cover                      # totals for ./... and ./pkg/...
+make cover-check                # fails below COVERAGE_MIN
+go test -coverprofile=/tmp/cov.out ./pkg/... && go tool cover -func=/tmp/cov.out | tail -1
+
+# Run any demo: every directory under examples/ (54 of them) is a main package.
 go run ./examples/simple
-go run ./examples/agent_v2
-go run ./examples/streaming
-go run ./examples/middleware
-go run ./examples/react_tool
-go run ./examples/react_builtin_tools
-go run ./examples/multi_provider
-go run ./examples/structured_output
-go run ./examples/pipeline_multi_agent
-go run ./examples/permission
-go run ./examples/agent_team
-go run ./examples/mcp
-go run ./examples/embedding
-go run ./examples/long_term_memory
-go run ./examples/rag_react
-go run ./examples/a2a_http
-go run ./examples/realtime_echo
-go run ./examples/agent_service
-go run ./examples/scheduled_task
-go run ./examples/model_call
-go run ./examples/multimodal
-go run ./examples/multiagent
+go run ./examples/<name>        # list them with: ls examples/
 ```
 
-`vendor/` is checked into the working tree (and listed in `.gitignore` — i.e. it's a local convenience, not the source of truth). If you change dependencies, run `go mod tidy` and don't commit a stale `vendor/`.
+`vendor/` does not exist in the tree and is `.gitignore`d: dependencies resolve from the module proxy, and dependency changes commit only `go.mod` + `go.sum`.
 
-LLM-backed examples need one of: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE_URL`). The `loadChatModelFromEnv` helpers inside the examples pick a backend in the order Anthropic → DashScope → OpenAI.
+LLM-backed examples need one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE_URL`). The `loadChatModelFromEnv` helpers inside the examples pick a backend in the order Anthropic → DashScope → OpenAI.
 
-## Commit workflow
+## Testing, coverage and commit workflow
 
-Use the fork-and-PR flow in `CONTRIBUTING.md`; the Quality Gate in `AGENTS.md`
-applies to every change. `vendor/` is `.gitignore`d — add dependencies with
-`go get <pkg> && go mod tidy` and commit only `go.mod` + `go.sum` (CI restores
-them from the module proxy). Commit messages must not mention AI assistants or
-carry `Co-Authored-By` trailers for them.
+- Tests live next to the code as `*_test.go`. Shared harnesses: `agenttest` (mock model/loop plus assertions), `event/streamcheck` (event-stream invariants), `providercontract` (per-provider contract harnesses; a test-helper package that imports `testing`), `replay` flight tapes with golden seeds (regenerate via `go test ./pkg/agentscope/agent -golden-update`), and `replay/evalkit` YAML task suites.
+- Coverage is a commit gate: CI fails when statement coverage of `./pkg/...` drops below `COVERAGE_MIN` (65.0 %, defined in `.github/workflows/ci.yml`, mirrored by `make cover-check`). `examples/` are untested demos by design and are excluded. Every behavior change needs a test; report touched-package coverage in the PR description.
+- Fuzz targets: `FuzzBashSafety` (`tool`) and `FuzzUnmarshalContentBlocks` (`message`); CI smokes both for 30 s. Re-run them locally when touching those parsers.
+- Branch naming, PR checklist, docs-update obligations, release/tagging and the mandatory evaluator review: `AGENTS.md` ("Contributing workflow", "Releases, versions, security", "Quality Gate") and `CONTRIBUTING.md`.
 
 ## Architecture
 
@@ -202,18 +184,6 @@ The package layout intentionally mirrors the Python project. Each subpackage exp
 - When adding a new example, give it its own `examples/<name>/main.go` and add it to the list in `README.md`. CI builds every example via `go build ./examples/...`, so an example that doesn't compile breaks the whole build.
 - When adding a new model provider, follow the pattern: embed `OpenAIFormatter` if OpenAI-compatible, create `XxxConfig` struct, implement `Chat`/`ChatStream`/`CountTokens`, add retry logic via `IsRetryableError`, extract cache tokens from usage response.
 
-## Quality Gate: Evaluator Review (MANDATORY)
+## Quality Gate (pointer)
 
-Every code change and documentation update MUST pass adversarial evaluator review before commit/push:
-
-1. **For code**: The evaluator checks correctness (bugs, races, panics), completeness (edge cases, error handling), security (injection, leakage), and maintainability (API design). Only PASS (no HIGH findings) allows commit.
-
-2. **For docs**: The evaluator cross-references every code example, API reference, function signature, and numeric claim against actual source code. Any inaccuracy is a blocking finding.
-
-3. **Build gates** (all must pass):
-   - `go build ./...`
-   - `go vet ./...`
-   - `go test -race -count=1 ./...` (or affected packages)
-   - `golangci-lint run ./...` — 0 issues
-
-This policy exists because documentation drift and untested code are the two largest sources of technical debt. The evaluator catches what automated tools cannot: semantic correctness, API contract violations, and design flaws that only manifest under adversarial conditions.
+The mandatory gate — `go build`, `go vet`, `go test -race -count=1`, `golangci-lint` with 0 issues, the `./pkg/...` coverage floor, plus adversarial evaluator review — is defined once in `AGENTS.md` §"Quality Gate". For documentation changes specifically: every code example must compile against the real source, every API name, signature, struct field and numeric claim (counts, versions, coverage) must match reality, and no link may be stale. Documentation drift is treated as a blocking defect, which is why this file avoids enumerated lists that rot (examples, release notes) and points at the source of truth instead.

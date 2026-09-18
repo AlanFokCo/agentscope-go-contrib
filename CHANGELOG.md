@@ -62,6 +62,29 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   (122 packages) and `golangci-lint run ./...` (0 issues); `go mod tidy -diff`
   is empty and `go.sum` is untouched.
 
+### Changed — community docs and a CI coverage gate
+
+- `AGENTS.md` and `CLAUDE.md` rewritten for the community repository:
+  `AGENTS.md` gains an entry-point table (CONTRIBUTING, CODE_OF_CONDUCT,
+  SECURITY, CHANGELOG, `docs/`), contribution/release/security pointers, a
+  mandatory coverage policy and the Conventional-Commit-style subject
+  convention the repo already uses, and drops the release-notes dump that
+  duplicated `STABILITY.md`/`CHANGELOG.md`. `CLAUDE.md` keeps the architecture
+  map, gains a testing/coverage section, and fixes stale claims (`vendor/`
+  never existed in the tree; the drifting enumerated examples list is gone).
+- **Coverage is now a commit gate**: CI fails when statement coverage of
+  `./pkg/...` drops below `COVERAGE_MIN` (**65.0 %**, set in
+  `.github/workflows/ci.yml` and mirrored as the `make cover-check` default),
+  and `make cover` / `make cover-check` reproduce
+  the measurement locally. Baseline at introduction: ≈59.6 % for `./...` and
+  ≈66.6 % for `./pkg/...`; `examples/` are untested demos by design and are
+  excluded from the gate but still must compile.
+- `.github/PULL_REQUEST_TEMPLATE.md` checklist gains a coverage line and a
+  CHANGELOG line; `AGENTS.md` documents the docs-update obligations (README
+  examples table, `README.es-ES.md` in the same commit, `docs/`, the `CLAUDE.md`
+  architecture map, CHANGELOG entry).
+- No library behavior changes; build, vet, `-race` tests and lint are unaffected.
+
 ### Added — upstream sync batch (Python 8/14–9/7 window)
 
 Nineteen upstream PRs ported. The rest were triaged as not applicable or

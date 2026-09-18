@@ -8,6 +8,7 @@
 # Go
 vendor/
 coverage.out
+coverage-pkg.out
 coverage.html
 *.test
 *.prof
