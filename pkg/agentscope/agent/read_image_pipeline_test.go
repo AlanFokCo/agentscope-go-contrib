@@ -10,10 +10,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // scriptedToolModel returns one prepared response per call, then a plain text

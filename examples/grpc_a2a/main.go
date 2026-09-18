@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/a2a/grpc"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/a2a/grpc"
 )
 
 // This example demonstrates TCP-based agent-to-agent communication.

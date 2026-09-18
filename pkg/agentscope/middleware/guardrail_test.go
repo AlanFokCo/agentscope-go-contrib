@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 func makeResp(text string) *model.ChatResponse {

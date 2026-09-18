@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // GitHubRegistryDefaultBaseURL is GitHub's public MCP registry endpoint.

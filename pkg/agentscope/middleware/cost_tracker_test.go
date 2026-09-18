@@ -6,8 +6,8 @@ import (
 	"math"
 	"testing"
 
-	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 func TestCostTracker_BasicAccumulation(t *testing.T) {

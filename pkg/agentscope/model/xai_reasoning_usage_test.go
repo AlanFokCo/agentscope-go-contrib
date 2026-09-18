@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 const xaiUsageJSON = `"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":22,"completion_tokens_details":{"reasoning_tokens":7}}`

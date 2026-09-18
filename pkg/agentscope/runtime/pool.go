@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // ErrPoolClosed is returned by Submit when the pool has been closed.

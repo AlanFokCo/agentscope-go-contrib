@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/workspace"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/workspace"
 )
 
 // WorkspaceManager manages workspace lifecycle with session↔workspace

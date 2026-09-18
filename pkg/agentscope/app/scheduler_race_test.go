@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/schedule"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/schedule"
 )
 
 // syncScheduler runs the task function INSIDE Schedule, which a real scheduler

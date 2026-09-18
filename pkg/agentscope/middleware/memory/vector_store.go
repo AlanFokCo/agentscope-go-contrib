@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/embedding"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/embedding"
 )
 
 // vectorEntry stores a memory with its precomputed embedding.

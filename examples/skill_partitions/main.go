@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/skill"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/skill"
 )
 
 // This example demonstrates per-agent workspace skill isolation (Phase 3,

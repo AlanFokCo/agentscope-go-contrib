@@ -24,9 +24,9 @@ import (
     "log"
     "os"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/replay"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/replay"
 )
 
 func main() {
@@ -56,9 +56,9 @@ import (
     "strings"
     "testing"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agenttest"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/replay"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agenttest"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/replay"
 )
 
 func TestQ3Analysis(t *testing.T) {
@@ -107,10 +107,10 @@ import (
     "fmt"
     "sync"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/runtime"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/runtime"
 )
 
 // poolAgent adapts *agent.UnifiedAgent to the agent.Agent interface that
@@ -211,7 +211,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/hotreload"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/hotreload"
 )
 
 type AgentConfig struct {
@@ -275,7 +275,7 @@ import (
     "log"
     "time"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/wasm"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/wasm"
 )
 
 func main() {
@@ -326,7 +326,7 @@ import (
     "log"
     "time"
 
-    mesh "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/a2a/grpc"
+    mesh "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/a2a/grpc"
 )
 
 func main() {
@@ -381,9 +381,9 @@ import (
     "fmt"
     "time"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/bench"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/bench"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 func main() {

@@ -24,11 +24,11 @@ import (
 	"net/http"
 	"os"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/service"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/service"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 func main() {

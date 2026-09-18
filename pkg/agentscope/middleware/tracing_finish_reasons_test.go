@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 func findFinishReasons(t *testing.T, tracer *attributedRecordingTracer) string {

@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/a2a"
-	asagent "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/a2a"
+	asagent "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // This example demonstrates A2AAgent + HTTPClient: one process acts as both server and client.

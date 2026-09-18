@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/device"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/device"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // MockSerialDevice simulates a serial-connected robot arm.

@@ -131,7 +131,7 @@ sm.Poll(ctx)  // Get fresh sensor data
 Use the device's local filesystem for operational logs:
 
 ```go
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/audit"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/audit"
 
 // NewFileLogger returns (*audit.FileLogger, error). The logger appends one JSON
 // line per tool execution, permission decision, and error.

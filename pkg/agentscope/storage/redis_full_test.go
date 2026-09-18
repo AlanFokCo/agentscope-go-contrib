@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 )
 
 // mockRedisClient is a pure in-memory implementation of RedisClient for testing.

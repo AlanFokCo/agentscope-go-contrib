@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/hotreload"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/hotreload"
 )
 
 // This example demonstrates hot-reload of configuration files.

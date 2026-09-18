@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 func TestLSPTool_Creation(t *testing.T) {

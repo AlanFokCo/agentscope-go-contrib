@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // MockResponse is a canned model response returned when a MockRule matches.

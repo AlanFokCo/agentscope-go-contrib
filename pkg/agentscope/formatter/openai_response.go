@@ -3,7 +3,7 @@ package formatter
 import (
 	"fmt"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // OpenAIResponseFormatter formats messages for OpenAI's Responses API.

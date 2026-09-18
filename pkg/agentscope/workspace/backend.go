@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/platform"
 	"os/exec"
 	"time"
 )

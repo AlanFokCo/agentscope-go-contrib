@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // fullStream is a realistic Responses SSE transcript: a reasoning item, two

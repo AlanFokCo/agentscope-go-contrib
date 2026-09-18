@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/audit"
-	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/audit"
+	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 func actingCtx(t *testing.T) (context.Context, MiddleContext) {

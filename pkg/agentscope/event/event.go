@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/types"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/types"
 )
 
 // EventType enumerates all event types in the agent lifecycle.

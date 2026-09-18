@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	aserrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	aserrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // soFakeModel is a scripted ChatModel for structured-output ladder tests.

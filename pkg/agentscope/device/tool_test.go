@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
 )
 
 // testConnector is a mock Connector for testing.

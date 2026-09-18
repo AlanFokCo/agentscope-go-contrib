@@ -3,7 +3,7 @@ package realtime
 import (
 	"context"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // Stream is the minimal streaming interface, used as a placeholder.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/skill"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/skill"
 )
 
 func TestComposeOrder(t *testing.T) {

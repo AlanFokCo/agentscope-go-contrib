@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/loop"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/metrics"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/loop"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/metrics"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // This example demonstrates the v3 agent loop infrastructure:

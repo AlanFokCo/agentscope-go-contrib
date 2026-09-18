@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag"
 )
 
 // PDFParser extracts text from PDF files using a basic stream-based approach.

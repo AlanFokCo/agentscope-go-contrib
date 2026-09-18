@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/messagebus"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/messagebus"
 )
 
 // InMemoryPubSub is a minimal in-process PubSub for the fleet demo.

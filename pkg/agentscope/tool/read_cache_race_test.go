@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // GetCacheWithMtime used to return a pointer INTO its own entries slice.

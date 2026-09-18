@@ -3,9 +3,9 @@ package middleware
 import (
 	"context"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event/streamcheck"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/logging"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event/streamcheck"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/logging"
 )
 
 // StreamValidator is an OPT-IN development middleware that runs the

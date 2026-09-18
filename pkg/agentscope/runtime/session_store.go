@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // SessionState represents the persisted state of a session.

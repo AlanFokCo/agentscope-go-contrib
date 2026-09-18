@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/middleware"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/middleware"
 )
 
 // Flight-recorder extensions for the recording middleware (HARNESS_DESIGN

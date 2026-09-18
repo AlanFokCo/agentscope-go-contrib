@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // allowedResources is the set of Kubernetes resource types that can be queried

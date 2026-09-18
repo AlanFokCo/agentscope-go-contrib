@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // Agent is the minimal surface Launch needs — *agent.UnifiedAgent

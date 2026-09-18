@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // MCPTool wraps a single MCP server tool as a Go Tool interface implementation.

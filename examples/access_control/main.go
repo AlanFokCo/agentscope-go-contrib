@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/access"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/access"
 )
 
 // This example demonstrates the access control system: creating policies,

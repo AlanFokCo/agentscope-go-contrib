@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // jsonStringArg returns s as a JSON string literal. Use it for any runtime

@@ -120,7 +120,7 @@ The `rag/parser` package converts common file formats into `rag.Document` slices
 ### Usage
 
 ```go
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag/parser"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag/parser"
 
 // Parse a PDF into document chunks
 p := &parser.PDFParser{Cfg: parser.DefaultChunkConfig()}

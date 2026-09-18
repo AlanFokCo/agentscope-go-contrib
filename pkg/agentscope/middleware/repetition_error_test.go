@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 func errResp() *tool.ToolResponse {

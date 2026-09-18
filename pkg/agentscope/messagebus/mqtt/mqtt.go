@@ -14,7 +14,7 @@ import (
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/messagebus"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/messagebus"
 )
 
 // MQTTTransport implements messagebus.PubSub over MQTT.

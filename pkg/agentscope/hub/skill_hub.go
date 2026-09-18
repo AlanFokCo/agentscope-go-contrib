@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // SkillHubConfig holds configuration for a skill hub instance.

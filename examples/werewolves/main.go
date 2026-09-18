@@ -17,9 +17,9 @@ import (
 	"math/rand"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // Role represents a player's role in the game.

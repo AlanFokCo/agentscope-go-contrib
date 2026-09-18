@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // ClawHubDefaultBaseURL is the public ClawHub skill registry.

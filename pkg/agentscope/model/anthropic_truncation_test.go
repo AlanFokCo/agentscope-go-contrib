@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/httpx"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpx"
 )
 
 func anthropicTruncationEvents(withMessageStop bool) []httpx.SSEEvent {

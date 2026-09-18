@@ -10,11 +10,11 @@ import (
 	"path"
 	"strings"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/skill"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/storage"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tts"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/workspace"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/skill"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/storage"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tts"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/workspace"
 )
 
 // registerExtendedRoutes adds CRUD routes for agents, credentials, schedules,

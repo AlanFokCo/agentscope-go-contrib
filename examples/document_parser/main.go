@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag/parser"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag/parser"
 )
 
 // This example demonstrates the document parser system: parsing text into

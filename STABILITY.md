@@ -5,11 +5,11 @@ production-hardening status of the library.
 
 ## Versioning
 
-The module path is `github.com/alanfokco/agentscope-go/v2`. The latest release
-tag is `v2.0.9`. Consumers import as:
+The module path is `github.com/agentscope-ai/agentscope-go/v2`. The latest release
+tag is `v2.0.10`. Consumers import as:
 
 ```go
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
 ```
 
 ## Stability tiers
@@ -26,8 +26,8 @@ import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
 - **Internal** (`internal/...`): no compatibility guarantee; do not import.
 
 Packages not listed above are unclassified. Treat them as Experimental until
-they are graded. As of v2.0.9 that includes
-`workspace`, `schedule`, `rag`, `rag/parser`, `middleware`, `storage`, `mcp`, `embedding`,
+they are graded. That list includes `workspace`, `schedule`, `rag`,
+`rag/parser`, `middleware`, `storage`, `mcp`, `embedding`,
 `audit`, `device`, `metrics`, `replay`, `bench`, `wasm`, `hotreload`, `a2a`,
 `messagebus`, `pipeline`, `session`, `prompt`, `team`, `webui`, `access`,
 `resilience` and `tracing`. The 2026-09 sync batch added exported API to five of

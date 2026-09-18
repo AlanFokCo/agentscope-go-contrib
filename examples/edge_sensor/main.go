@@ -15,7 +15,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/device"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/device"
 )
 
 // MockSensor simulates a temperature sensor for demonstration.

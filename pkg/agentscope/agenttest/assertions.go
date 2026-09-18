@@ -3,8 +3,8 @@ package agenttest
 import (
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event/streamcheck"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event/streamcheck"
 )
 
 // AssertEventPresent fails the test if no event of the given type is found.

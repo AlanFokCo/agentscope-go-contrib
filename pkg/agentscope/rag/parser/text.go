@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag"
 )
 
 // TextParser parses plain text files into Document chunks.

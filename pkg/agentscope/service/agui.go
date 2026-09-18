@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // AG-UI protocol event types.

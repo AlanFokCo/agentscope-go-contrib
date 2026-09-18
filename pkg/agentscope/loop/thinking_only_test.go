@@ -3,7 +3,7 @@ package loop
 import (
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 func TestIsThinkingOnlyResponse_OnlyThinking(t *testing.T) {

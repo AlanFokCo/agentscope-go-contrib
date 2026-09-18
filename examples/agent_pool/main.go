@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/runtime"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/runtime"
 )
 
 // This example demonstrates the handler-based Pool for fan-out agent workloads.

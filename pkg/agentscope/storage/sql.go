@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 )
 
 // SQLConfig configures the SQL storage backend.

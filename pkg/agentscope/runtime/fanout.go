@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // FanOutResult holds the outcome of a single agent invocation in FanOut.

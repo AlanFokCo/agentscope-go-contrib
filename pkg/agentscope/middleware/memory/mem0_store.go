@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/httpx"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpx"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 const defaultMem0BaseURL = "https://api.mem0.ai/v1"

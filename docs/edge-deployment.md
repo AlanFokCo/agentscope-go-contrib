@@ -81,7 +81,7 @@ ssh pi@raspberrypi '/usr/local/bin/agent'
 The `ConnectivityAwareModel` automatically routes between local and cloud models:
 
 ```go
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 
 local, _ := model.NewOllamaChatModel(model.OllamaConfig{Model: "qwen2.5:0.5b"})
 cloud, _ := model.NewOpenAIChatModel(model.OpenAIConfig{APIKey: key, Model: "gpt-4o-mini"})

@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // Upstream #2389: tool results carrying image data must reach the Responses

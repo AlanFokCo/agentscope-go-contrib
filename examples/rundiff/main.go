@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/replay"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/replay"
 )
 
 func main() {

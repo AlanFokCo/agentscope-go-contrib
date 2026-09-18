@@ -2,7 +2,7 @@
 
 ## Overview
 
-agentscope-go is organized as a single Go module at `github.com/alanfokco/agentscope-go/v2`. The `/v2` major-version suffix is part of every import path. All library code lives under `pkg/agentscope/`, runnable demos under `examples/`.
+agentscope-go is organized as a single Go module at `github.com/agentscope-ai/agentscope-go/v2`. The `/v2` major-version suffix is part of every import path. All library code lives under `pkg/agentscope/`, runnable demos under `examples/`.
 
 ## Package Structure
 

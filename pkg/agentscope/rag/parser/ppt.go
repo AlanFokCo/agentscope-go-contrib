@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag"
 )
 
 // PPTParser parses .pptx files (Office Open XML Presentation) into Document chunks.

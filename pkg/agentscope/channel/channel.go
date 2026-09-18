@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // ChatKind is a chat's audience shape.

@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/schedule"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/schedule"
 	"github.com/sirupsen/logrus"
 )
 

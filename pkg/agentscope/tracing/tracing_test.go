@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/protocol"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/protocol"
 )
 
 func TestNoopTracer(t *testing.T) {

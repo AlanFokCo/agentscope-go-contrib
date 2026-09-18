@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/workspace"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/workspace"
 )
 
 func TestWorkspaceAgentFactory_ReceivesSessionWorkspace(t *testing.T) {

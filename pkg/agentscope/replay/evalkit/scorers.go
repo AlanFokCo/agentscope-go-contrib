@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // TaskOutcome carries everything observable about one task run for scoring.

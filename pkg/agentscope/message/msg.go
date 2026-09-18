@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/types"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/types"
 )
 
 // TimestampFormat is the canonical timestamp layout used throughout agentscope-go.

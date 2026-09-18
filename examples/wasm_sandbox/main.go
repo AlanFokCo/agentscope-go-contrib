@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/wasm"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/wasm"
 )
 
 // This example demonstrates the WASM sandbox configuration and API.

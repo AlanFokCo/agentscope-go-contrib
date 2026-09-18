@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/middleware/memory"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/middleware/memory"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // This example demonstrates the file-based long-term memory stack added in

@@ -3,10 +3,10 @@ package app
 import (
 	"fmt"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/credential"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/embedding"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tts"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/credential"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/embedding"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tts"
 )
 
 // GetChatModelForCredential maps a credential's provider to the correct model

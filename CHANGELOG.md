@@ -11,6 +11,57 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Changed — repository and module path move
+
+- **BREAKING (import path only)**: the repository moved to the AgentScope
+  community org — `github.com/alanfokco/agentscope-go` →
+  **`github.com/agentscope-ai/agentscope-go`**. The module path is now
+  `github.com/agentscope-ai/agentscope-go/v2`, so consumer imports change from
+  `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...` to
+  `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`. Every package
+  name, API, option and behavior is identical, so migrating is a mechanical
+  search-and-replace of the import prefix followed by `go mod tidy`.
+- **The new path is installable only from the first tag cut after this commit.**
+  No published version carries it yet: `v2.0.4`–`v2.0.10` each declare
+  `module github.com/alanfokco/agentscope-go/v2` in their `go.mod`, and the
+  module proxy lists those same tags under the new path too, where
+  `go get github.com/agentscope-ai/agentscope-go/v2@latest` fails with
+  `module declares its path as github.com/alanfokco/agentscope-go/v2 ... but was
+  required as github.com/agentscope-ai/agentscope-go/v2`. Consumers keep
+  importing the old path — those versions stay resolvable from the proxy — until
+  a release is tagged from this commit, and only then run:
+
+  ```bash
+  go get github.com/agentscope-ai/agentscope-go/v2@latest
+  go mod tidy
+  ```
+
+  The `pkg.go.dev` page that the badge in `README.md`/`README.es-ES.md` links to
+  returns 404 for the same reason (the badge image itself still renders) and
+  starts resolving once that release is published.
+- The `retract` block in `go.mod` (phantom `v2.1.0`/`v2.1.1`, tagged then
+  deleted) is deliberately unchanged, and it stays inert: the go command reads
+  retractions from the *highest* published version's `go.mod`, and `v2.1.1.mod`
+  carries no `retract` directive — `go list -m
+  github.com/alanfokco/agentscope-go/v2@latest` still resolves to the deleted
+  `v2.1.1`. A retraction only takes effect in a release numbered higher than
+  `v2.1.1` whose `go.mod` still declares the old path, and nothing on `main` can
+  produce one any more — every commit from this one on declares the new path; it
+  would take a deliberate tag cut from a `v2.0.10` maintenance branch. Until
+  then, old-path consumers have to pin a real version, e.g. `@v2.0.10`, because
+  `@latest` on the old path silently resolves to the deleted `v2.1.1`, whose zip
+  the proxy still serves. Under the new path the phantom versions were never
+  listed, so its `@latest` resolves to a version that actually exists as soon as
+  a release is tagged from this commit.
+- Inside this repository the rename covers the `go.mod` module line, the 366 Go
+  files under `pkg/` and `examples/` that import the module path (606 Go files
+  exist there in total), and the docs (`README.md`, `README.es-ES.md`,
+  `getting-started.md`, `STABILITY.md`, `CLAUDE.md`, `AGENTS.md`, `docs/`),
+  including the `pkg.go.dev` badge URLs and the `go get` instructions. Verified
+  with `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...`
+  (122 packages) and `golangci-lint run ./...` (0 issues); `go mod tidy -diff`
+  is empty and `go.sum` is untouched.
+
 ### Added — upstream sync batch (Python 8/14–9/7 window)
 
 Nineteen upstream PRs ported. The rest were triaged as not applicable or
@@ -857,7 +908,9 @@ so a truncated stream is reported but not retried.
 
 ### Changed
 - **BREAKING**: module path migrated to `/v2` — import
-  `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...`
+  `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...` (the repository has
+  since moved to `github.com/agentscope-ai/agentscope-go`; see `[Unreleased]` →
+  "Changed — repository and module path move")
 - Deprecated `ReActAgent`; examples migrated to `UnifiedAgent`
 
 ### Fixed

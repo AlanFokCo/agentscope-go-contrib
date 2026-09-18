@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // GeminiTTSModel calls the Google Gemini generateContent API with audio

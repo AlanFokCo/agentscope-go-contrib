@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 )
 
 // RedisFullStorage implements FullStorage backed by Redis.

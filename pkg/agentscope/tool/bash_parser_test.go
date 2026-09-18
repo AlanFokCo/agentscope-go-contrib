@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/platform"
 )
 
 func TestIsReadOnlyCommand(t *testing.T) {

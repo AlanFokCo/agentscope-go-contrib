@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/hub"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/hub"
 )
 
 // This example demonstrates the Hub System: creating a Registry and

@@ -9,14 +9,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 )
 
 // InMemoryStorage stores agent states in a process-local map.

@@ -21,7 +21,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License" />
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go" alt="Go 1.25+" />
-  <a href="https://pkg.go.dev/github.com/alanfokco/agentscope-go/v2/pkg/agentscope"><img src="https://pkg.go.dev/badge/github.com/alanfokco/agentscope-go/v2/pkg/agentscope.svg" alt="Go Reference" /></a>
+  <a href="https://pkg.go.dev/github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"><img src="https://pkg.go.dev/badge/github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope.svg" alt="Go Reference" /></a>
 </p>
 
 ---
@@ -367,7 +367,7 @@ Kit de herramientas de agente de código listo para producción:
 **Requisitos:** Go 1.25+
 
 ```bash
-go get github.com/alanfokco/agentscope-go/v2/pkg/agentscope
+go get github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope
 ```
 
 ```bash
@@ -385,10 +385,10 @@ import (
     "encoding/json"
     "fmt"
 
-    as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+    as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 func main() {

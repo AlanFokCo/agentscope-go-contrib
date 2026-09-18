@@ -6,8 +6,8 @@ import (
 	"math"
 	"os"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/embedding"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/embedding"
 )
 
 // This example demonstrates the embedding model system.

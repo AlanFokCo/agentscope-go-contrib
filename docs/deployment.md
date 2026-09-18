@@ -381,9 +381,9 @@ import (
     "strings"
     "testing"
 
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agenttest"
-    "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/replay"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agenttest"
+    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/replay"
 )
 
 func TestQ3Summary(t *testing.T) {

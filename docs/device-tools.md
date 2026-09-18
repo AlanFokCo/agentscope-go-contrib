@@ -42,7 +42,7 @@ type Connector interface {
 ## Serial Port
 
 ```go
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/device"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/device"
 
 serial := device.NewSerialConnector("/dev/ttyUSB0",
     device.WithBaudRate(115200),

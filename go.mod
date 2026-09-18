@@ -1,4 +1,4 @@
-module github.com/alanfokco/agentscope-go/v2
+module github.com/agentscope-ai/agentscope-go/v2
 
 go 1.25.0
 

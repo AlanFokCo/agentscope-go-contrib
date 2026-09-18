@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // Validate checks all stream invariants and returns a combined error

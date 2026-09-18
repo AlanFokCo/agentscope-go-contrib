@@ -7,24 +7,24 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/audit"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/audit"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	agenterrors "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/errors"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/loop"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/middleware"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/protocol"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/skill"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/types"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/loop"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/middleware"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/protocol"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/skill"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/types"
 )
 
 const (

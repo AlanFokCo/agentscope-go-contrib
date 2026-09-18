@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
 )
 
 const (

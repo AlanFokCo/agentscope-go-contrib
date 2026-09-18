@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	agentscope "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
 )
 
 // TaskStatus represents the lifecycle state of a scheduled task.

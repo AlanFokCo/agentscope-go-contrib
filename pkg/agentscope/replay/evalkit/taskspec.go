@@ -14,7 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // TaskSpec is one evaluation task (suite YAML format).

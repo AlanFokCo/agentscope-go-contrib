@@ -1,7 +1,7 @@
 package formatter
 
 import (
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // OpenAIFormatter formats messages for OpenAI-compatible APIs (OpenAI, DashScope, DeepSeek).

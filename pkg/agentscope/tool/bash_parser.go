@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/platform"
 	"mvdan.cc/sh/v3/syntax"
 )
 

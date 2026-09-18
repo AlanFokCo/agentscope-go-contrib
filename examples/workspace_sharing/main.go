@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/agent"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/app"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/workspace"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/app"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/workspace"
 )
 
 // This example demonstrates session-workspace sharing and the read-only

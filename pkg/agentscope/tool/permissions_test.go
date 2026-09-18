@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
 )
 
 func TestBashTool_CheckPermissions_ReadOnly(t *testing.T) {

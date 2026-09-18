@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/logging"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/logging"
 )
 
 // RunOption configures the Run function.

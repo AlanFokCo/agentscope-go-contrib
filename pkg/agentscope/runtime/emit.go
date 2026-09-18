@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // emitEvent forwards ev to out without blocking past context cancellation.

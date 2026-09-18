@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/tool"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 )
 
 // DeviceTool wraps a Connector as a tool.Tool for use in agent loops.

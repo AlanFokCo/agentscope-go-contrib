@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/schedule"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/schedule"
 	"github.com/google/uuid"
 )
 

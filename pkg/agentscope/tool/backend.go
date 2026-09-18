@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/permission"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/platform"
 )
 
 // Backend abstracts the execution environment for tool operations, allowing

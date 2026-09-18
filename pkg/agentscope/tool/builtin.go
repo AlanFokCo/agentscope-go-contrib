@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/platform"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/platform"
 )
 
 const (

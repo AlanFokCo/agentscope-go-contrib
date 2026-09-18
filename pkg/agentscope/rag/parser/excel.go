@@ -9,7 +9,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/rag"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag"
 )
 
 // ExcelParser parses .xlsx files (Office Open XML Spreadsheet) into Document chunks.

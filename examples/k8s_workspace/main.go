@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/workspace"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/workspace"
 )
 
 func main() {

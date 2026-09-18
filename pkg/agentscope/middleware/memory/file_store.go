@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/internal/fsutil"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
 )
 
 // FileStoreFilename is the JSON Lines file a FileStore persists memories in.

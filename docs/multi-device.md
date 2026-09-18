@@ -48,7 +48,7 @@ sudo systemctl start mosquitto
 ```go
 //go:build mqtt
 
-import "github.com/alanfokco/agentscope-go/v2/pkg/agentscope/messagebus/mqtt"
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/messagebus/mqtt"
 
 transport, err := mqtt.NewMQTTTransport("tcp://broker-ip:1883",
     mqtt.WithClientID("sensor-agent-01"),

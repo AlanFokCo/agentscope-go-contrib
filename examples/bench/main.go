@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/bench"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/bench"
 )
 
 // This example demonstrates the agent load testing framework.

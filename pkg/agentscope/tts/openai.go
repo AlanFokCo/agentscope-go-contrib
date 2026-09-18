@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // OpenAITTSModel calls OpenAI Audio Speech API (/v1/audio/speech).

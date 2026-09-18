@@ -21,8 +21,8 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 | Version | Supported |
 |---------|-----------|
 | `main` | Yes. Receives fixes first |
-| `v2.0.9` (latest tag) | Best effort, critical fixes only. Hardening commits have landed after this tag and are not in any release yet |
-| `v2.0.8` and earlier | No. Upgrade |
+| `v2.0.10` (latest tag) | Best effort, critical fixes only. Hardening commits have landed after this tag and are not in any release yet |
+| `v2.0.9` and earlier | No. Upgrade |
 
 ## Security Considerations
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 )
 
 // ReplyWatchdogMiddleware aborts replies that run too long or stall

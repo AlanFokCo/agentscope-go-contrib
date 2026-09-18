@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	as "github.com/alanfokco/agentscope-go/v2/pkg/agentscope"
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/schedule"
+	as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/schedule"
 )
 
 // This example demonstrates the scheduling system.

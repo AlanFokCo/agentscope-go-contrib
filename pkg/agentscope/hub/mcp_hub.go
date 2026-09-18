@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/alanfokco/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 // MCPHubConfig holds configuration for an MCP hub instance.
