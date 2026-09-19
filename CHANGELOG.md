@@ -11,6 +11,15 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Changed — contributor guidance
+
+- Reorganize `AGENTS.md` around focused contributions, evidence-based issue
+  triage, community communication and independent evaluator review. Clarify
+  validation commands, coverage reporting and authorized delivery to `main`.
+- Replace the feature inventory in `CLAUDE.md` with source navigation and
+  implementation contracts, including provider request verification, context
+  sizing, streaming, permissions and persistence boundaries.
+
 ### Changed — repository and module path move
 
 - **BREAKING (import path only)**: the repository moved to the AgentScope

@@ -1,189 +1,229 @@
-# CLAUDE.md
+# Architecture and implementation guide
 
-Guidance for coding agents (Claude Code, Codex and friends) and human
-contributors working in this repository. Workflow, coverage and review
-policy live in `AGENTS.md`; this file is the architecture and
-code-convention map.
+Use this file to find the code responsible for a behavior and the contracts a
+change must preserve. Contribution workflow, community communication, validation
+and mandatory evaluator review live in [AGENTS.md](AGENTS.md). API stability and
+known hardening limits live in [STABILITY.md](STABILITY.md).
 
-## Project
+The module is `github.com/agentscope-ai/agentscope-go/v2`. Paths below are relative
+to the repository root. Read the implementation and its adjacent tests before
+changing an area; this map describes responsibilities, not a guarantee that every
+feature is wired into every execution path.
 
-`agentscope-go` is the Go port of the Python [AgentScope](https://github.com/agentscope-ai/agentscope) multi-agent LLM framework, developed in the `agentscope-ai` community org under the Apache-2.0 license. The module path is **`github.com/agentscope-ai/agentscope-go/v2`** (the `/v2` suffix is part of every import path); all library code lives under `pkg/agentscope/`, runnable demos under `examples/`. `go.mod` declares `go 1.25.0`.
+## Source map
 
-Read `AGENTS.md` for the contribution workflow, coverage policy and mandatory quality gate, and `STABILITY.md` for stability tiers and the production-hardening status before large changes. When a feature exists upstream, check the Python implementation first for design consistency.
+| Area | Start here | Responsibility |
+|---|---|---|
+| Global configuration | [config.go](pkg/agentscope/config.go) | Process configuration and `agentscope.Log()` |
+| Messages and events | [message/](pkg/agentscope/message/), [event/](pkg/agentscope/event/) | Typed content blocks and agent lifecycle events |
+| Agent interface | [agent.go](pkg/agentscope/agent/agent.go) | `Agent` and embeddable `AgentBase` |
+| Agent execution | [unified_agent.go](pkg/agentscope/agent/unified_agent.go) | `UnifiedAgent`, model/tool rounds, middleware and interactive approval |
+| Context and recovery | [compress.go](pkg/agentscope/agent/compress.go), [checkpoint.go](pkg/agentscope/agent/checkpoint.go) | Context compression, summaries and checkpoint loading |
+| Loop integration | [loop_bridge.go](pkg/agentscope/agent/loop_bridge.go), [loop/](pkg/agentscope/loop/), [runtime/](pkg/agentscope/runtime/) | Agent-to-loop adapters and session execution |
+| Model interface and providers | [model.go](pkg/agentscope/model/model.go), [model/](pkg/agentscope/model/) | Chat calls, responses, usage, provider configuration and model cards |
+| Message formatting | [formatter/](pkg/agentscope/formatter/) | Provider-specific message and multimodal formats |
+| Middleware | [middleware.go](pkg/agentscope/middleware/middleware.go), [middleware/](pkg/agentscope/middleware/) | Lifecycle hooks, budgets, tracing, guardrails and memory integration |
+| Tools and permissions | [tool.go](pkg/agentscope/tool/tool.go), [orchestrator.go](pkg/agentscope/tool/orchestrator.go), [permission/](pkg/agentscope/permission/) | Tool contracts, execution and permission decisions |
+| Execution backends | [tool/backend.go](pkg/agentscope/tool/backend.go), [workspace/](pkg/agentscope/workspace/) | Local or remote filesystem/command execution and workspace lifecycle |
+| State and sessions | [storage/](pkg/agentscope/storage/), [session/](pkg/agentscope/session/) | Storage interfaces, implementations and session state |
+| Service and UI | [app/](pkg/agentscope/app/), [service/](pkg/agentscope/service/), [webui/](pkg/agentscope/webui/), [console/](pkg/agentscope/console/) | Application wiring, HTTP handlers and interaction frontends |
+| External integrations | [mcp/](pkg/agentscope/mcp/), [a2a/](pkg/agentscope/a2a/), [channel/](pkg/agentscope/channel/) | Tool servers, remote agents and messaging channels |
+| Retrieval and memory | [rag/](pkg/agentscope/rag/), [embedding/](pkg/agentscope/embedding/), [memory/](pkg/agentscope/memory/) | Retrieval, embeddings and memory stores |
+| Composition and scheduling | [pipeline/](pkg/agentscope/pipeline/), [team/](pkg/agentscope/team/), [schedule/](pkg/agentscope/schedule/) | Agent coordination and scheduled execution |
+| Discovery and skills | [credential/](pkg/agentscope/credential/), [hub/](pkg/agentscope/hub/), [skill/](pkg/agentscope/skill/) | Provider configuration, integration discovery and skill loading |
+| Edge and device support | [device/](pkg/agentscope/device/), [messagebus/](pkg/agentscope/messagebus/), [connectivity.go](pkg/agentscope/model/connectivity.go) | Device tools, pub/sub and cloud/local routing |
+| Observability and evaluation | [tracing/](pkg/agentscope/tracing/), [audit/](pkg/agentscope/audit/), [replay/](pkg/agentscope/replay/) | Traces, audit records, deterministic replay and evaluation |
+| Shared internal helpers | [internal/](pkg/agentscope/internal/) | HTTP transport, HTTP server hardening and atomic file replacement |
+| Runnable examples | [examples/](examples/) | Usage examples; inspect each example's configuration and service requirements |
 
-## Common commands
+## Execution paths and contracts
 
-```bash
-# Everything CI does, locally:
-make check                      # gofmt -s + go mod tidy + vet + build + test (-race)
-go build ./... && go build ./examples/...
-go vet ./...
-go test -race -count=1 ./...
-golangci-lint run ./...         # v2
+### Agents, events and middleware
 
-# Single package / single test:
-go test ./pkg/agentscope/pipeline -run TestName -v
+`UnifiedAgent` is the primary agent implementation. `ReActAgent` is the deprecated
+JSON tool-calling implementation; avoid extending it when the feature belongs in
+the current agent. `UserAgent` and `A2AAgent` serve interactive-input and remote
+agent use cases.
 
-# Coverage — CI gates statement coverage of ./pkg/... at COVERAGE_MIN (65.0%):
-make cover                      # totals for ./... and ./pkg/...
-make cover-check                # fails below COVERAGE_MIN
-go test -coverprofile=/tmp/cov.out ./pkg/... && go tool cover -func=/tmp/cov.out | tail -1
+`UnifiedAgent.ReplyStream` exposes an event stream, but its `callModel` method
+currently calls `ChatModel.Chat`. An event-streaming interface does not imply
+streamed token generation from the provider. `UnifiedAgentRunner.LoopOptions`
+connects the agent to `loop.Loop`; its model adapter also uses `callModel`.
+When changing retries, cancellation, permissions or accounting, trace the
+specific entry point and its adapters rather than assuming they share all hooks.
 
-# Run any demo: every directory under examples/ (54 of them) is a main package.
-go run ./examples/simple
-go run ./examples/<name>        # list them with: ls examples/
-```
+`Middleware` provides reply, reasoning, model-call, acting, system-prompt,
+compression and permission hooks, plus tool registration. `BaseMiddleware`
+provides defaults. System-prompt transformation is a pipeline; the other hooks
+have their own handler contracts. In particular:
 
-`vendor/` does not exist in the tree and is `.gitignore`d: dependencies resolve from the module proxy, and dependency changes commit only `go.mod` + `go.sum`.
+- `OnReply` may consume a non-interrupted `ReplyEndEvent` to request another
+  round. Interrupted ends must propagate. Forward `CustomEvent` values whose
+  names start with `agentscope.`; these carry internal round-boundary signals.
+- `OnCheckPermission` and its chain builder exist, but the current unified-agent
+  and loop bridge paths do not automatically invoke that middleware hook.
+  Follow the actual permission-engine calls when changing enforcement.
+- The loop bridge cannot carry interactive approval or external-tool events;
+  use `UnifiedAgent.ReplyStream` for that workflow. Do not silently approve a
+  tool because an execution path cannot request confirmation.
 
-LLM-backed examples need one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `DASHSCOPE_API_KEY` (+ optional `DASHSCOPE_BASE_URL`). The `loadChatModelFromEnv` helpers inside the examples pick a backend in the order Anthropic → DashScope → OpenAI.
+Preserve event ordering, terminal events and cancellation-aware sends. Check
+checkpoint schema compatibility and pending-tool state when changing recovery.
+Read [checkpoint tests](pkg/agentscope/agent/checkpoint_test.go) and
+[loop bridge tests](pkg/agentscope/agent/loop_bridge_test.go) for those boundaries.
 
-## Testing, coverage and commit workflow
+### Messages, formatting and model calls
 
-- Tests live next to the code as `*_test.go`. Shared harnesses: `agenttest` (mock model/loop plus assertions), `event/streamcheck` (event-stream invariants), `providercontract` (per-provider contract harnesses; a test-helper package that imports `testing`), `replay` flight tapes with golden seeds (regenerate via `go test ./pkg/agentscope/agent -golden-update`), and `replay/evalkit` YAML task suites.
-- Coverage is a commit gate: CI fails when statement coverage of `./pkg/...` drops below `COVERAGE_MIN` (65.0 %, defined in `.github/workflows/ci.yml`, mirrored by `make cover-check`). `examples/` are untested demos by design and are excluded. Every behavior change needs a test; report touched-package coverage in the PR description.
-- Fuzz targets: `FuzzBashSafety` (`tool`) and `FuzzUnmarshalContentBlocks` (`message`); CI smokes both for 30 s. Re-run them locally when touching those parsers.
-- Branch naming, PR checklist, docs-update obligations, release/tagging and the mandatory evaluator review: `AGENTS.md` ("Contributing workflow", "Releases, versions, security", "Quality Gate") and `CONTRIBUTING.md`.
+`message.Msg` carries typed blocks, including text, thinking, tool calls/results,
+data and hints. Preserve provider metadata when transforming blocks. Tool results
+can contain structured or multimodal content; use their accessors or checked type
+switches instead of assuming `Output` is a string. Inspect the relevant formatter
+for the supported media types and wire representation.
 
-## Architecture
+`model.ChatModel` defines `Chat`, `ChatStream` and `CountTokens`. Provider adapters
+live in `model/`; OpenAI Chat Completions and Responses have separate
+implementations. Shared types or options do not prove that every provider
+serializes a field or interprets it identically. Trace request construction and
+response parsing in both call paths.
 
-The package layout intentionally mirrors the Python project. Each subpackage exposes a small interface plus one or more concrete implementations:
+For provider work:
 
-### Core
+- Check the exact endpoint, authentication requirements, JSON field names,
+  omission rules and option precedence. Use captured HTTP requests in tests;
+  checking a Go options struct alone cannot establish the wire format.
+- Keep provider-reported `ChatUsage` separate from `CountTokens` estimates.
+  Preserve input/output and cache token fields, including in final stream
+  responses, wrappers and budgets.
+- On successful completion, `ChatStream` emits deltas followed by a final
+  assembled response with `IsLast=true`. Consumers must inspect
+  `ChatResponse.Error` on every response and handle channel closure and
+  `ctx.Err()`: cancellation can close the channel without a final response.
+  Do not concatenate the assembled final content onto already accumulated
+  deltas. Producers close their output channel and make sends cancellation-aware.
+- Test setup failures, partial streams, terminal errors and cancellation.
+  `FallbackChatModel` falls back on stream setup errors; it does not restart an
+  already-started stream after a terminal error.
+- Inspect transport behavior before adding retries. The JSON helper in
+  [internal/httpx](pkg/agentscope/internal/httpx/) retries eligible failures with
+  backoff and `Retry-After` handling; SSE and provider-specific request paths
+  need separate inspection. Do not multiply attempts or duplicate transport logs
+  without an explicit reason and tests.
 
-- **`config.go`** — global `Init(opts ...Option)` sets up a process-wide `Config`. `agentscope.Log()` (logrus) is the canonical logger.
-- **`message`** — `Msg` with typed `ContentBlock` variants: `TextBlock`, `ThinkingBlock` (with `Extra` for provider-specific fields like Anthropic `signature`), `ToolCallBlock` (with `Extra` for OpenAI Response `call_id`), `ToolResultBlock` (with `Metadata`), `DataBlock` (Base64Source/URLSource for images/audio/video), `HintBlock` (polymorphic `Hint` — `string` or `[]ContentBlock`). `NewMsg` panics on invalid content type by design.
-- **`event`** — Full event lifecycle: ReplyStart/End, ModelCallStart/End, TextBlock/ThinkingBlock/DataBlock Start/Delta/End, ToolCall Start/Delta/End, ToolResult Start/TextDelta/DataDelta/End, HintBlock, HITL events (RequireUserConfirm, UserConfirmResult, RequireExternalExecution, ExternalExecutionResult), **ToolExecStart/End, ToolPolicyDenied** (sandbox execution visibility), ExceedMaxIters, Custom.
+HTTP client defaults and override precedence live in
+[model/http.go](pkg/agentscope/model/http.go); individual constructors can also
+supply their own defaults. A non-nil custom client is used unchanged. In the
+shared client builder, a positive `ClientOptions.Timeout` overrides the default;
+zero does not disable it. The shared SSE helper removes the client's total
+request timeout and relies on the caller's context. Do not assume this describes
+every provider-specific transport. Tests for longer calls must cover cancellation
+as well as successful completion.
 
-### Agent
+`SecretStr` and `ResolveAPIKey` support credential handling in provider configs.
+Keep keys out of logs, errors and test fixtures committed to the repository.
+`GenerateStructuredOutput` uses tool calling; its fallback and retry behavior
+must be considered when accounting for model calls and usage.
 
-- **`agent`** — `Agent` interface (`ID`, `Reply`, `Observe`, `Interrupt`, `SetConsoleOutputEnabled`) and `AgentBase` (UUID identity, console printing, msghub subscriptions, hooks). Two agent generations:
-  - **`UnifiedAgent`** (v2) — aligns with Python's single `Agent` class. Native tool calling, streaming via `ReplyStream()` returning `<-chan event.Event`, middleware chain, permission engine, context compression, skill instructions injection, audio block filtering. Options: `WithToolkit`, `WithMiddlewares`, `WithContextConfig`, `WithPermissionContext`, `WithSkills`, `WithReadCache`, `WithState` (restore from checkpoint), `WithStateSaver` (auto-checkpoint at tool-batch boundaries and park points). Crash recovery: `LoadCheckpoint` loads resumable state (schema-version guarded); resumed replies re-emit pending confirm/external events, confirmed calls execute inline, and batched answers are stashed per call ID.
-  - **`UnifiedAgentRunner`** — bridges `UnifiedAgent` to `loop.Loop` via `modelCallerAdapter` and `toolExecutorAdapter`. `LoopOptions()` returns `[]loop.Option` for `loop.New()`. Supports `WithLoopHooks` for metrics/tracing hook injection.
-  - **`ReActAgent`** (v1, deprecated) — JSON-based tool calling protocol. Supports RAG via `WithKnowledge(...)` and basic compression via `WithCompression`.
-  - **`A2AAgent`** — remote agent proxy via `a2a.Client`.
-  - **`UserAgent`** — human input agent with pluggable `InputProvider`.
+### Context and model capabilities
 
-### Model
+[agent/compress.go](pkg/agentscope/agent/compress.go) owns compression thresholds,
+summary generation and retention of recent context. `ContextConfig.ContextSize`
+is an explicit override. Otherwise `model.ResolveContextSize` checks
+`ContextSizer`, then `ModelNamer` plus a model card, then the caller's fallback.
+These interfaces are optional; do not assume that a provider or wrapper
+implements them.
 
-- **`model`** — `ChatModel` interface: `Chat`, `ChatStream` (`<-chan ChatResponse`), `CountTokens`. 9 provider adapters: `openai.go`, `anthropic.go`, `dashscope.go`, `deepseek.go`, `gemini.go`, `moonshot.go`, `ollama.go`, `xai.go`, `openai_response.go`. All share `internal/httpx` for HTTP calls.
-  - **Call options**: `WithTemperature`, `WithMaxTokens`, `WithTools`, `WithToolChoice`, `WithThinking(enable, budget)`, `WithReasoningEffort(effort)`, `WithRetries(max, delay)`.
-  - **`ChatResponse`** carries `Error` (terminal streaming failure — consumers MUST check it per chunk) and `StopReason` (normalized `stop`/`length`/`tool_calls`/`content_filter`, via `normalizeStopReason`). Stream consumers emit `ChatResponse{Error: ...}` on scanner/transport failure instead of ending silently (see `stream_error_test.go`).
-  - **`ChatUsage`** tracks `InputTokens`, `OutputTokens`, `CacheCreationInputTokens`, `CacheInputTokens`; loop + budget account all dimensions.
-  - **Retry**: `internal/httpx` is the transport-level retry authority — retries 429 + 5xx, honors `Retry-After`, full-jitter exponential backoff, ctx-aware (no sleeping through a cancelled context). `IsRetryableError` also honors typed `errors.AgentError.Retryable`.
-  - **`FallbackChatModel`** — `NewFallbackChatModel(primary, fallback)` or `NewFallbackChain(models...)` (ordered failover chain), ctx-aware backoff.
-  - **`SecretStr`** — wrapper type that redacts API keys in `String()`/`MarshalJSON()`/`MarshalText()`. `UnmarshalJSON` for config file loading. `ResolveAPIKey(plain, secret)` helper for the dual-field migration pattern. All 22 config structs carry `SecretAPIKey SecretStr` alongside deprecated `APIKey string`.
-  - **`GenerateStructuredOutput`** — forces tool call, auto-retries with `tool_choice: "auto"` when thinking-mode conflicts.
-  - **`ValidateToolChoice`** — validates tool names against available schemas.
-  - **Model cards** — YAML files under `model/models/` loaded via `//go:embed`. `GetModelCard(name)`, `ListModels()`.
-  - Token counting traverses all block types including DataBlock base64 estimation.
+Embedded cards in [model/models/](pkg/agentscope/model/models/) describe model
+metadata. They do not configure a server or establish its runtime context limit.
+For local servers and fallback chains, check the configured window of every
+model that may receive the request. Delegating metadata to the initially selected
+model alone cannot protect a smaller model selected after a failed call.
 
-### Formatter
+Context changes must preserve valid tool-call/result relationships and account
+for system prompts, summaries, tool schemas and multimodal content. Check
+compression failure handling and recorded usage, not only the successful summary
+path. Model capability data is not automatically enforced by every tool path;
+verify the wiring before documenting such a guarantee.
 
-- **`formatter`** — `Formatter` / `MultiAgentFormatter` interfaces. Per-provider implementations with multimodal DataBlock support:
-  - `OpenAIFormatter` — image_url, input_audio formats. `SupportedInputMediaTypes` with glob matching.
-  - `AnthropicFormatter` — Anthropic content blocks, image source, ThinkingBlock with signature, tool_use/tool_result.
-  - `DashScopeFormatter` — extends OpenAI with video_url, input_audio, reasoning_content.
-  - `OpenAIResponseFormatter` — input_text, input_image, function_call/function_call_output, reasoning items.
-  - `GeminiFormatter` — Gemini native parts format, inlineData/fileData for media.
-  - Shared helpers: `ConvertToolResultToString`, `GroupMessages`, `SupportsMediaType`, `FormatDataBlockForOpenAI`.
+### Tools, permissions and workspace boundaries
 
-### Middleware
+Tools implement `tool.Tool`, commonly by embedding `BaseTool`. The toolkit and
+`tool.Orchestrator` handle registration, execution and permission decisions.
+Adding a tool requires examining schema validation, error behavior, cancellation
+and the relevant permission checks; registration alone does not provide them.
+Do not weaken existing safety checks to make a new path work.
 
-- **`middleware`** — Onion-chain hooks on `Middleware` interface:
-  - `OnReply` — wraps entire reply lifecycle
-  - `OnReasoning` — wraps each reasoning step in the ReAct loop
-  - `OnModelCall` — wraps each model API call
-  - `OnActing` — wraps each tool execution
-  - `OnSystemPrompt` — pipeline transformer for system prompt
-  - `OnCompressContext` — wraps context compression
-  - `OnCheckPermission` — defined permission wrapper, with `BuildCheckPermissionChain`; current UnifiedAgent and loop bridge call the engine directly and do not automatically invoke this hook
-  - `ListTools() []tool.Tool` — middleware can provide additional tools
-  - Chain builders: `BuildReplyChain`, `BuildReasoningChain`, `BuildModelCallChain`, `BuildActingChain`, `BuildCompressChain`, `ApplySystemPromptPipeline`.
-  - Reply-lifecycle contract: an `OnReply` middleware may swallow the `ReplyEndEvent` (receive without forwarding) to force another reasoning-acting round; interrupted ends cannot be swallowed; middleware must forward `CustomEvent` values named `agentscope.*` (internal sentinels).
-   - Built-in: budget control, TTS, tracing (with `SpanAttribute`/`AttributedTracer`), long-term memory (3 modes: static/agent/both with vector store), **cost tracker** (`WithMaxCostUSD` observed-cost threshold + `WithExchangeRate` for multi-currency display), **guardrails** (Block/Redact/Warn content filtering on model responses with `KeywordBlockRule`/`KeywordRedactRule`/`MaxLengthRule`/`CustomRule`), **repetition breaker** (`NewRepetitionBreaker`: identical tool-call spin detection, hint at threshold, `ErrToolRepetition` result past it; per-reply streaks), **reply watchdog** (`NewReplyWatchdog`: wall-clock + idle timeouts), **cost ledger** (`NewCostLedger`/`NewCostTracking`: cross-session aggregation with retention bound; `NewReplyCostBudget`: per-reply soft warning + rejection of subsequent calls via `ErrBudgetExceeded` once recorded cost reaches the threshold; no reservation for in-flight calls), **run logger** (`NewRunJSONL`: full event stream + model-call records as JSONL, with redactor hook), **stream validator** (`NewStreamValidator`: opt-in runtime event-stream invariant checks for development).
+File and command tools can use a `tool.Backend` from the context.
+`workspace.NewToolBackend` adapts a workspace for use with `tool.WithBackend`.
+When that backend is present, inspect its path and operation semantics instead
+of assuming local OS behavior. Use `path` for workspace-relative paths with
+forward slashes and `filepath` for actual host filesystem paths.
 
-### Tool
+Local file-tool path confinement is opt-in through `tool.WithWorkspaceRoot`;
+it does not provide process or network isolation. Permission modes, an
+orchestrator sandbox policy and a workspace execution backend have different
+responsibilities. A configured policy does not by itself enforce all filesystem,
+network or resource restrictions. Verify each claimed boundary in the relevant
+backend; consult [known hardening limits](STABILITY.md#open-hardening-work).
 
-- **`tool`** — `Tool` interface embedding `permission.Checker`. `BaseTool` provides defaults. `FunctionTool` wraps plain Go functions.
-  - **Built-in tools**: bash, read, write, edit, **MultiEdit** (validate edits before rewriting one file, `applyStringEdit`), **ApplyPatch** (validate a unified diff before rewriting, `applyUnifiedDiff`), glob, grep, webfetch (SSRF-guarded), reset_tools, task_create/get/list/update. Local Edit/MultiEdit/ApplyPatch currently use `os.WriteFile`; the local Write tool uses atomic replacement. `NewEnhancedToolkit()` provides the 8-tool coding-agent core (bash, read, write, edit, MultiEdit, ApplyPatch, glob, grep), not the full set of 24 registered tool names. WebFetch, LSP, NotebookEdit, Agent/Spawn, compress_context, the alias-shaped execute_shell_command and view_text_file, and the Schedule/task tools are opt-in. TodoWrite is intentionally absent — the `task_*` tools cover it (bidirectional block/blocked_by deps).
-  - **Bash safety**: `bash_parser.go` uses `mvdan.cc/sh/v3/syntax` for AST-level analysis: `IsReadOnlyCommand`, `CheckInjectionRisk`, `CheckDangerousRemoval`, `CheckInterpreterAttack` (detects `python -c`/`node -e`/`perl -e` etc. with dangerous API calls), `ExtractFilePaths`, `CheckSedConstraints`, `ExtractCommandPrefixes`. On Windows, regex-based patterns for PowerShell/Cmd replace AST analysis (`isPowerShellReadOnly`, injection patterns, dangerous removal patterns).
-  - **Process-group isolation**: `proc_unix.go` / `proc_windows.go` — Unix bash commands run in a dedicated process group (`Setpgid`); timeout cleanup signals that group with `SIGKILL`. This reduces orphaned children but does not impose a process-count limit. `WaitDelay` forces orphaned pipes closed.
-  - **Bash redirect safety**: `IsReadOnlyCommand` rejects output redirects (`cat x > /etc/passwd` is NOT read-only); `CheckDangerousRedirect` routes redirect targets through the dotfile + system-path checks (bypass-immune). curl/wget are NOT on the read-only allowlist (network egress). See `redirect_safety_test.go`.
-  - **Per-tool permission chains**: bash chain (injection → PowerShell dangerous [Windows] → read-only → dangerous cmd → sed → dangerous paths → dangerous removal → **dangerous redirect** → ACCEPT_EDITS → passthrough). File tools use `filepath.Match` for glob rules.
-  - **Workspace jail**: `WithWorkspaceRoot(ctx, root)` + `resolvePath` confine read/write/edit to a root (symlink-aware) when set; unset = unconfined (default, backward-compatible).
-  - **Tool streaming**: `ToolChunk` struct + `StreamingTool` optional interface with `ExecuteStream`.
-  - **Backend abstraction / sandbox execution**: `Backend` interface (`ExecShell`, `ReadFile`, `WriteFile`, `FileExists`, `ListDir`, `Glob`). `LocalBackend` default; `getBackendIfSet(ctx)` detects an explicitly-configured backend. When one is set, bash + read/write/edit/multiedit/apply_patch route through it using **workspace-relative paths** (so a `workspace.ToolBackend` over a Docker/E2B workspace gives real isolation); otherwise the rich local path (streaming/cwd/read-cache/jail) is used. Wire via `tool.WithBackend(ctx, workspace.NewToolBackend(ws))`.
-  - **Orchestrator limits**: `OrchestratorConfig.DefaultToolTimeout` (per-tool `context.WithTimeout`) and `MaxToolResultBytes` (result cap).
-  - **Orchestrator sandbox policy**: `OrchestratorConfig.Policy` applies selected name-based checks and injects the policy via `sandbox.WithPolicy`. It does not route execution through `Sandbox.Execute`, fully cover custom/aliased tools, or enforce all network/resource fields. Use a configured workspace backend and verify its isolation behavior.
-  - **Orchestrator audit**: `OrchestratorConfig.AuditLogger` (`audit.Logger`) — records every tool execution, permission denial, and sandbox policy decision as structured `audit.Entry`.
-  - **Diff generation**: write/edit/multiedit/apply_patch produce a unified diff in `ToolResponse.Metadata["diff"]`.
-  - **Input validation**: `ValidateInput(schema, input)` is a real recursive JSON-Schema validator (type, required, `enum`, string `minLength/maxLength/pattern`, number `minimum/maximum`, nested `properties`, array `items`). Fuzzed (`safety_fuzz_test.go`).
-  - **Task dependencies**: bidirectional updates for blocks/blocked_by.
-  - **Read line truncation**: lines > 2000 chars get `[truncated]`.
+Shell safety uses the Unix parser and Windows-specific logic. Add platform guards
+for tests that require a Unix shell; do not skip portable behavior merely because
+Windows takes a different path. Safety changes need adversarial cases and the
+fuzz checks in `AGENTS.md`. Preserve audit records for tool execution and policy
+decisions when adding or changing execution paths.
 
-### Infrastructure
+### Persistence and internal services
 
-- **`credential`** — Per-provider credential structs + `Factory` with `Register`, `FromMap`, `ListSchemas`.
-- **`embedding`** — `Embedder` interface, `FileEmbeddingCache`, model cards via `//go:embed` YAML.
-- **`agenttest/faults`** — deterministic model-error / tool-failure / latency injection for resilience chaos testing.
-- **`model/pricing`** — embedded default price card (`default.yaml`) backing `model.ResolvePrice` (overlay pricing for cost governance/eval; `SetPrice` overrides win).
-- **`tts`** — `TTSModel` + `RealtimeTTSModel` interfaces. DashScope + CosyVoice implementations. Model cards via `//go:embed` YAML.
-- **`mcp`** — MCP client (Stdio + HTTP). Name validation (`^[a-zA-Z0-9_-]+$`), execution timeout wiring.
-- **`workspace`** — `Workspace` interface + 8 backends: `LocalWorkspace`, `DockerWorkspace`, `E2BWorkspace`, `K8sWorkspace`, `OpenSandboxWorkspace`, `DaytonaWorkspace`, `AppleContainerWorkspace`, `BubblewrapWorkspace`. `ManagedWorkspace` extends with MCP/Skill management (`.mcp.json` persistence, `skills/` directory). `ToolBackend` adapts any Workspace into a `tool.Backend`.
-  - **K8s workspace hardening** (`workspace/k8s.go`): `PodSecurityContext` (RunAsNonRoot, RunAsUser, RunAsGroup, FSGroup), `ResourceRequirements` (CPU/Memory limits+requests), `ServiceAccountName`, Labels/Annotations for discovery, `PodTTLSeconds` (anti-leak via `activeDeadlineSeconds`), `ImagePullPolicy` (default `IfNotPresent`), `DisableServiceAccount` (`automountServiceAccountToken: false`), `SecretToken` (SecretStr). `buildPodManifest()` extracted for testability. Timeout fix: respects parent ctx deadline.
-  - **K8s cluster tools** (`workspace/k8s_tools.go`): `NewKubectlGetTool(kubeconfig)` — read-only query for 15 resource types (secrets explicitly BLOCKED); `NewKubectlLogTool(kubeconfig)` — pod log retrieval with tail/since/container. Both: 30s timeout, no cluster mutation, kubectl shell-out (no client-go dep).
-- **`permission`** — `Engine` with 5 modes (default, accept_edits, explore, bypass, dont_ask). `Checker` interface embedded by `Tool`. `Decision` with bypass-immune safety checks.
-- **`storage`** — `InMemoryStorage`, `FileStorage`, `RedisStorage` for agent state persistence; **`RedisFullStorage`** implements the 28-method `FullStorage` interface over Redis (credentials, agents, sessions, schedules, messages, teams) with reverse-index message lookup and mutex-protected append. `FileStorage.Save` uses **`internal/fsutil.WriteFileAtomic`** (temp + file fsync + rename). This does not describe every file-backed component: replay stores, embedding cache, and some tool paths still write directly.
-- **`internal/fsutil`** — `WriteFileAtomic`. **`internal/httpsec`** — `Harden(*http.Server)` (ReadHeaderTimeout/IdleTimeout/MaxHeaderBytes) + `LimitBody` (MaxBytesReader) for the HTTP servers.
-- **`pipeline`** — `Pipeline` with `Then`/`If` combinators. `MsgHub` for agent message routing.
-- **`tracing`** — `Tracer` interface + `AttributedTracer` optional extension with `SpanAttribute`. `NoopTracer`, `LoggerTracer`.
-- **`replay`** — Deterministic record/replay of LLM calls. `Tape` (versioned sequence of `Entry` carrying `reply_id`/`usage`), `Recorder`/`Replayer` middleware hooking `OnModelCall` (recorder options: `WithRingLimit`, `WithRecordSizeLimit`, `WithDumpOnError` atomic flight-record dumps, `WithRedactor`). `FileStore` for tape persistence. **Eval harness**: `Scorer` interface, 5 built-in scorers (ExactMatch, Contains, JSONField, TextContains, Composite), `EvalTape()` runner producing `EvalReport`, `AssertTape(t, ...)` go-test helper for regression testing. **Run logs**: `ParseRunLog`/`DiffRunLogs` (LCS-aligned diff with truncation flag) + `FormatRunDiff`.
-  - **`replay/evalkit`** — YAML task suites (`TaskSpec` with fixtures and budgets), pinned-sampling `Runner` (cost accounting via `model.ResolvePrice`), scorers (contains/json_field/text_contains/trajectory/budget/LLM judge with result caching), multi-turn tasks, Markdown `SuiteReport`, A/B `Compare` reports.
-- **`providercontract`** (test-only) — per-provider harness wall asserting usage accounting, streaming lifecycle (exactly one IsLast, delta accumulation == final), truncation-error surfacing, ctx-cancel stops, error taxonomy (429 retryable / 401 not), and thinking wire formats for openai, anthropic, dashscope, gemini, deepseek, moonshot.
-- **`event/streamcheck`** — single implementation of event-stream invariants (reply/block/tool-call/tool-result pairing, no orphan deltas); `agenttest` delegates to it.
-- **`rag`** — `Index` + `KnowledgeBase` interfaces, vector indices (InMemory, Qdrant, QdrantText, Elasticsearch, Milvus, MongoDB). **Reranker**: `Reranker` interface + `RerankedIndex` wrapper (fetches N*multiplier candidates, reranks for precision). Document parsers under `rag/parser/` (Text, PDF, Word, Excel, PPT).
-- **`skill`** — `Skill` struct with `Category` field, `LocalSkillLoader`, `FormatSkillInstructions`. `SkillManager` registry with `Register`, `Get`, `List`, `ListByCategory`, `LoadFromDir`, `FormatInstructions`.
-- **`schedule`** — `InMemoryScheduler` for periodic agent task execution.
+Storage, session state, replay files and tool writes have distinct durability
+contracts. [internal/fsutil](pkg/agentscope/internal/fsutil/) provides atomic
+replacement, but not every writer uses it. Check the actual writer before
+claiming atomic persistence. Review copying and ownership of nested maps, slices
+and pointers when state crosses goroutines or is restored from a checkpoint.
 
-### v3 Infrastructure
+[internal/httpsec](pkg/agentscope/internal/httpsec/) contains shared server
+hardening helpers. Inspect authentication, body limits, timeouts and shutdown at
+the actual handler/server boundary. Reuse existing helpers where appropriate;
+the existence of a helper is not proof that an endpoint uses it.
 
-- **`protocol`** — Shared enums: `LoopState` (`StateReason`, `StateInspect`, `StateAct`, `StateWait`, `StateExit`), `ApprovalPolicy`, and `PermissionProfile`. Loop events are emitted using the `event` package; `protocol` does not define `LoopEvent`, `ModelCallResult`, or `ToolCallResult`.
-- **`errors`** — Structured `AgentError{Category, Code, Message, Cause, Retryable, RetryAfter, AgentMsg}` with `Is(target)` matching by `Code` for sentinel support and `AgentMessage()` bridging operator-facing/LLM-facing error audiences. `Category` enum: Model/Tool/Permission/Context/Config/Platform/Network/Resource. Sentinels: `ErrModelRateLimited`, `ErrModelTimeout`, `ErrModelContextLimit`, `ErrToolDenied`, `ErrToolTimeout`, `ErrSandboxDenied`, `ErrLoopInterrupted`, `ErrLoopMaxIters`, `ErrBudgetExceeded`, `ErrGuardrailBlocked`. Tool error types: `ToolNotFoundError`, `ToolInterruptedError`, `ToolJSONDecodeError`, `ToolGroupInactiveError`, `ToolExecutionError`, `ToolImplError` (migrated from former `exception` package, now deleted). Helpers: `Newf`, `Wrap`, `IsRetryable`, `NewThrottled`, `RetryAfterOf`, `IsAgentError`, `GetAgentMessage`.
-- **`loop`** — `Loop` struct configured via `WithModelCaller`, `WithToolExecutor`, `WithSchemaProvider`, `WithMaxIters`, `WithSystemPrompt`, `WithHooks`. `RunSync` executes the full reasoning-acting cycle. `Hook` interface: `OnLoopStart/End`, `BeforeModelCall`, `AfterModelCall`, `BeforeToolExec`, `AfterToolExec`, `OnStateTransition`. These methods have no `context.Context` parameter.
-- **`runtime`** — `SessionEngine` serializes turns and retains the configured `loop.ContextManager`; `State()` returns a snapshot of captured history with shared message objects, not a guarantee of successful persistence. `AgentManager` manages subagents via `Spawn`/`Stop`/`List`/`WaitAll`, `BudgetTracker`, and session hooks. `runtime.Run(ctx, Runnable, ...RunOption)` in `harness.go` manages signals, health probes, and shutdown; there is no `Harness` type or automatic session restore constructor.
-- **`metrics`** — `MetricsProvider` interface (`Counter`/`Histogram` factories, label-aware) + `Noop`. `InMemoryProvider` (label-aware, `Snapshot()`/`ValueFor`) for testing. **`metrics/prometheus`** subpackage: a real `MetricsProvider` over `prometheus/client_golang` + `Handler()` (promhttp) — the only place that pulls the prometheus dep; wire `app.AppConfig.MetricsHandler = provider.Handler()` to expose `GET /metrics`. `MetricsHook` implements `loop.Hook`.
-- **`platform`** — `Detect()` returns cached `Shell` (Type, Path). `DeriveExecArgs(cmd)` returns platform-correct `exec.Command` args. `ShellType`: Bash, Zsh, Sh, PowerShell, Cmd. `CheckPowerShellDangerous` has 10 regex patterns for dangerous PowerShell commands.
-- **`sandbox`** — `Sandbox` interface (`Execute`, `Setup`, `Teardown`), `Policy` struct (FileSystemPolicy with FSReadOnly/FSWorkspaceOnly/FSFullAccess + DenyPaths, NetworkPolicy with NetDisabled/NetAllowList/NetFullAccess, ProcessPolicy with AllowExec/MaxProcesses, ResourcePolicy with MaxMemoryMB/MaxCPUPercent/MaxDiskMB/TimeoutSec). `SandboxProvider` registry with `AutoSelect`. Context helpers: `WithPolicy`/`GetPolicy`.
-- **`audit`** — structured audit logging for tool execution, permission decisions, and policy enforcement. `Logger` interface with 4 implementations: `InMemoryLogger` (thread-safe, for tests), `FileLogger` (append-only JSON Lines), `MultiLogger` (fan-out), `NopLogger` (zero-alloc default). 10 action types. Context propagation via `WithLogger`/`GetLogger`.
+## Go conventions
 
-### App Layer
+- Use `context.Context` as the first argument for blocking operations. Preserve
+  parent cancellation through goroutines, retries and outbound requests.
+- Return errors for operational failures. Preserve documented constructor
+  contracts, including the programmer-error panics in `message.NewMsg` and
+  `agent.NewUnifiedAgent`; do not add new panic-based APIs casually.
+- Prefer small interfaces, existing embeddable defaults and functional options.
+  Preserve source compatibility and document meaningful behavior changes.
+- Wrap errors with context while preserving `errors.Is`/`errors.As` matching.
+  Use the structured errors and sentinels in
+  [errors/](pkg/agentscope/errors/); `AgentError.Is` matches by code.
+  `model.IsRetryableError` accepts a typed `Retryable=true` and otherwise falls
+  back to error-text matching; `false` alone does not prevent a retry. Use
+  `AgentMessage` where an error supplies a model-facing explanation.
+- Log through `agentscope.Log()`. Choose levels for the caller's operational
+  needs and avoid logging the same retry or failure at several layers.
+- Make resource ownership clear: who closes a channel, response body or file;
+  who cancels a worker; and whether returned state is shared or copied.
+- Keep tests deterministic where possible. Inject transports, clocks or fixtures
+  at existing seams instead of requiring real API keys, hardware or long waits.
 
-- **`app`** — `CreateApp(cfg)` factory wiring session management, chat (sync + SSE streaming), credentials, models, background tasks. HTTP routes: `/api/session`, `/api/chat/{id}`, `/api/chat/{id}/stream`, `/api/credential/schemas`, `/api/model`, `/api/task`, plus `GET /healthz`, `GET /readyz`, and optional `GET /metrics` (`Config.MetricsHandler`). Servers apply `httpsec.Harden` + `LimitBody`. `BackgroundTaskManager`, `CancelDispatcher`.
-- **`service`** — Lower-level HTTP service with `SSEWriter` + `Shutdown` (graceful drain), `/healthz`, `/readyz`, hardened server. AG-UI protocol constants. Service middleware (inbox, state change, tool offload).
-- **`console`** — Terminal viewing and interactive trial of agents (port of Python's `console` module). `Renderer` turns an event stream into line-based output (quiet/default/debug verbosity, `LastMsg` accumulation); `Launch` runs an interactive chat loop over any `Agent` with `ReplyStream` + `SubmitUserConfirm` (HITL confirmation y/N/a, Ctrl+C interrupts the current reply).
-- **`channel`** — IM platform channels (port of Python's `app.channel` core). `Channel` interface + normalised `Event`/`ConfirmationEvent`; `Gateway` routes inbound messages to per-chat session agents, tees reply streams to `SendResponse`, and round-trips tool confirmations (text-mode y/n/a or native `ConfirmationEvent`). **`channel/dingtalk`**: DingTalk robot over the official Stream SDK with session-webhook Markdown replies (v1: no AI-card streaming/media).
+## Test navigation
 
-### Context Compression
+| Change | Relevant tests or helpers |
+|---|---|
+| Agent rounds, recovery or compression | Adjacent `agent/*_test.go`, [agenttest/](pkg/agentscope/agenttest/) |
+| Lifecycle events | [event/streamcheck/](pkg/agentscope/event/streamcheck/) and agent stream tests |
+| Provider requests, usage and streaming | `model/*_test.go`, [providercontract/](pkg/agentscope/providercontract/) |
+| Deterministic replay | [replay/](pkg/agentscope/replay/), [agent/golden_test.go](pkg/agentscope/agent/golden_test.go) |
+| Task-level evaluation | [replay/evalkit/](pkg/agentscope/replay/evalkit/) |
+| Tool safety or backend routing | Adjacent `tool/*_test.go`, `workspace/*_test.go` and parser fuzz targets |
 
-- **`agent/compress.go`** — `ContextConfig` (trigger/reserve ratios, compression prompt, summary schema/template, tool result limit). `compressContext` runs through middleware chain, generates structured summary via `GenerateStructuredOutput`, replaces old context with summary.
-  - Block-level splitting: `splitMessageAtBlock` for finer granularity.
-  - Smart truncation: `TruncateToolResultBlocks` handles per-block truncation including base64 replacement.
-  - Read cache cleanup: `cleanReadCacheForReserved` drops stale file caches after compression.
+`providercontract` is test support and imports `testing`; do not add it to
+production dependency paths. Inspect its registered harnesses before claiming a
+provider is covered. Golden tapes can be regenerated with
+`go test ./pkg/agentscope/agent -golden-update` after an intentional behavior
+change; review the resulting diff, rather than accepting a new golden file as
+proof of correctness.
 
-## Conventions
-
-- Always pass `context.Context` as the first argument and return `(T, error)` rather than panicking. Construction contracts are documented in `STABILITY.md`: `message.NewMsg` and `agent.NewUnifiedAgent` panic on programmer errors, including a nil model or empty agent name.
-- Log through `agentscope.Log()` (logrus). `Debug` for noisy details, `Info` for lifecycle, `Warn` for retryable/degraded conditions, `Error` only for terminal failures. The `httpx` helper already logs at the right levels — don't double-log around it.
-- **Interfaces + embeddable defaults**: Define interfaces, provide `BaseXxx` structs with pass-through defaults (e.g. `BaseTool`, `BaseMiddleware`).
-- **Functional options**: Constructors take `opts ...XxxOption` (e.g. `NewUnifiedAgent(name, prompt, model, opts...)`).
-- **Streaming**: Use `<-chan T` pattern. Goroutine writes deltas (`IsLast=false`) then final accumulated response (`IsLast=true`), defers `close(ch)`.
-- **Content block polymorphism**: `ContentBlock` interface with type switch in formatters and response parsers. JSON uses `type` field discriminator.
-- **Provider-specific extensions**: Use `Extra map[string]any` on ThinkingBlock/ToolCallBlock for provider-specific fields rather than adding provider-specific struct fields.
-- New vector backends should mirror the Qdrant pair: a low-level `Index` that takes pre-computed vectors plus a higher-level "text index" that takes an `Embedder`.
-- When adding a new example, give it its own `examples/<name>/main.go` and add it to the list in `README.md`. CI builds every example via `go build ./examples/...`, so an example that doesn't compile breaks the whole build.
-- When adding a new model provider, follow the pattern: embed `OpenAIFormatter` if OpenAI-compatible, create `XxxConfig` struct, implement `Chat`/`ChatStream`/`CountTokens`, add retry logic via `IsRetryableError`, extract cache tokens from usage response.
-
-## Quality Gate (pointer)
-
-The mandatory gate — `go build`, `go vet`, `go test -race -count=1`, `golangci-lint` with 0 issues, the `./pkg/...` coverage floor, plus adversarial evaluator review — is defined once in `AGENTS.md` §"Quality Gate". For documentation changes specifically: every code example must compile against the real source, every API name, signature, struct field and numeric claim (counts, versions, coverage) must match reality, and no link may be stale. Documentation drift is treated as a blocking defect, which is why this file avoids enumerated lists that rot (examples, release notes) and points at the source of truth instead.
+Use the commands and coverage policy in `AGENTS.md` for final validation. Do not
+copy package counts, coverage snapshots or release inventories into this map;
+link to the relevant source or measure them when needed.
