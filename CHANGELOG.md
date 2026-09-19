@@ -11,6 +11,15 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Changed — README and onboarding
+
+- Reorganize the English and Spanish READMEs around installation, a complete
+  first-agent example, documentation and community contribution. Keep the full
+  example catalog available in a collapsible section.
+- Align the getting-started and examples guides with the current module path,
+  distinguish application setup from running a repository checkout, and clarify
+  agent events, provider streaming and simulated example behavior.
+
 ### Changed — contributor guidance
 
 - Reorganize `AGENTS.md` around focused contributions, evidence-based issue

@@ -1,131 +1,147 @@
-# Getting Started
+# Getting started
 
-## Prerequisites
+## Requirements and installation
 
-- **Go 1.25+**
-- An API key from at least one supported model provider
+Use Go 1.25 or newer. The example below needs an Anthropic API key and a model
+ID available to that account. You can choose a different adapter using the
+[provider guide](model-providers.md).
 
-## Installation
+This guide follows `main`. Published tags still use the former module path, so
+install the current community module with `@main` until a release uses that path.
+Go records the resolved revision in `go.mod`; commit `go.mod` and `go.sum` with
+your application. See the [migration notes](../CHANGELOG.md#changed--repository-and-module-path-move)
+for existing applications.
 
 ```bash
-go get github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope
+mkdir agentscope-demo
+cd agentscope-demo
+go mod init example.com/agentscope-demo
+go get github.com/agentscope-ai/agentscope-go/v2@main
 ```
 
-## Your First Agent
+## Create an agent
+
+Save this as `main.go`:
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
 
-    as "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
-    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
-    "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 )
 
 func main() {
-    as.Init()
+	cm, err := model.NewAnthropicChatModel(&model.AnthropicConfig{
+		SecretAPIKey:    model.NewSecretStr(os.Getenv("ANTHROPIC_API_KEY")),
+		Model:           os.Getenv("ANTHROPIC_MODEL"),
+		MaxOutputTokens: 1024,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    cm, err := model.NewDashScopeChatModel(model.DashScopeConfig{
-        APIKey: "sk-...",
-        Model:  "qwen-plus",
-    })
-    if err != nil {
-        panic(err)
-    }
+	assistant := agent.NewUnifiedAgent(
+		"assistant", "You are a helpful assistant. Keep answers concise.", cm,
+	)
 
-    a := agent.NewUnifiedAgent("assistant", "You are a helpful AI assistant.", cm)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 
-    reply, err := a.Reply(context.Background(), "Hello! What can you do?")
-    if err != nil {
-        panic(err)
-    }
-
-    if txt := reply.GetTextContent("\n"); txt != nil {
-        fmt.Println(*txt)
-    }
+	reply, err := assistant.Reply(ctx, "What is an AI agent? Explain in one sentence.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if text := reply.GetTextContent("\n"); text != nil {
+		fmt.Println(*text)
+	}
 }
 ```
 
-## Adding Tools
-
-Give your agent the ability to call functions:
-
-```go
-weatherTool := tool.NewFunctionTool(
-    "get_weather", "Get current weather for a city",
-    json.RawMessage(`{
-        "type": "object",
-        "properties": {"city": {"type": "string"}},
-        "required": ["city"]
-    }`),
-    func(ctx context.Context, input map[string]any) (any, error) {
-        city, _ := input["city"].(string)
-        return map[string]any{"city": city, "temp": "22°C"}, nil
-    },
-)
-
-a := agent.NewUnifiedAgent("bot", "You are a weather assistant.", cm,
-    agent.WithToolkit(tool.NewToolkit(weatherTool)),
-    agent.WithReactConfig(agent.ReactConfig{MaxIters: 5}),
-)
-```
-
-## Streaming Responses
-
-Get real-time output as the model generates:
-
-```go
-ch, _ := a.ReplyStream(ctx, "Tell me a story.")
-for evt := range ch {
-    switch e := evt.(type) {
-    case event.TextBlockDeltaEvent:
-        fmt.Print(e.Delta)
-    case event.ReplyEndEvent:
-        fmt.Println()
-    }
-}
-```
-
-## Environment Variables
-
-Set one of these API keys to get started:
-
-| Variable | Provider |
-|----------|----------|
-| `DASHSCOPE_API_KEY` | Alibaba DashScope (Qwen) |
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
-| `OPENAI_API_KEY` | OpenAI (GPT) |
-| `DEEPSEEK_API_KEY` | DeepSeek |
-| `GEMINI_API_KEY` | Google Gemini |
-| `MOONSHOT_API_KEY` | Moonshot (Kimi) |
-| `XAI_API_KEY` | xAI (Grok) |
-
-Optional: `DASHSCOPE_BASE_URL` to override the DashScope endpoint.
-
-## Running Examples
-
-The project includes 54 examples. Run any of them:
+Set a real key and a model ID available to your account. The placeholders below
+must be replaced. These commands use Bash/Zsh; in PowerShell use
+`$env:NAME = 'value'` for environment variables.
 
 ```bash
-export DASHSCOPE_API_KEY=sk-...
-go run ./examples/agent_v2          # Tool calling
-go run ./examples/streaming         # Streaming events
-go run ./examples/multimodal        # Image input
-go run ./examples/model_call        # Raw model API
-go run ./examples/replay            # Deterministic replay
-go run ./examples/agent_pool        # Agent pool fan-out
+export ANTHROPIC_API_KEY='your-api-key'
+export ANTHROPIC_MODEL='your-model-id'
+go mod tidy
+go run .
 ```
 
-See [examples.md](examples.md) for the full list.
+This program explicitly reads the environment variables and passes them to the
+adapter. The library does not automatically select a provider or model from
+those variables. The context bounds this example's reply; HTTP client timeouts
+can impose a shorter limit. See the adapter's `ClientOptions` and `HTTPClient`
+configuration when changing that budget.
 
-## Next Steps
+## Add a function tool
 
-- [Architecture](architecture.md) — Understand the package structure
-- [Model Providers](model-providers.md) — Configure different LLM backends
-- [Tools](tools.md) — Built-in tools, custom function tools, and document parsers
-- [Middleware](middleware.md) — Intercept and extend agent behavior (7 hooks)
-- [Deployment](deployment.md) — Run as an HTTP service, workspace sandboxing, agent pools
-- [Go Runtime Features](go-exclusive.md) — Deterministic replay, fan-out pool, hot-reload, WASM sandbox, TCP mesh, load testing
+In the program above, add `encoding/json` and
+`github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool` to the imports.
+Before constructing the agent, define a function tool:
+
+```go
+clockTool := tool.NewFunctionTool(
+    "get_utc_time", "Get the current time in UTC.",
+    json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+    func(_ context.Context, _ map[string]any) (any, error) {
+        return time.Now().UTC().Format(time.RFC3339), nil
+    },
+)
+```
+
+Replace the agent construction with:
+
+```go
+assistant := agent.NewUnifiedAgent(
+    "assistant", "Use get_utc_time when asked for the current time.", cm,
+    agent.WithToolkit(tool.NewToolkit(clockTool)),
+)
+```
+
+Use `"What time is it in UTC? Use the tool."` as the input to `Reply`. The model
+chooses when to call the tool, so use a model with tool-calling support. For more
+examples and permission configuration, see [Tools](tools.md) and
+[agent_v2](../examples/agent_v2/).
+
+## Events and model streaming
+
+`UnifiedAgent.ReplyStream` exposes lifecycle events for a reply, including tool
+execution and confirmation events. It currently makes non-streaming model calls
+internally. See [streaming](../examples/streaming/) for the event API and
+[console](../examples/console/) for interactive tool confirmation.
+
+For provider response chunks, use `ChatModel.ChatStream`; see
+[model_call](../examples/model_call/). Check each response's `Error`, handle
+channel closure and cancellation, and avoid appending final assembled content
+to already collected deltas.
+
+## Run repository examples
+
+Examples require a checkout; `go get` does not put the repository's demos in your
+application directory. From a separate working directory:
+
+```bash
+git clone https://github.com/agentscope-ai/agentscope-go.git
+cd agentscope-go
+go run ./examples/agent_pool
+```
+
+This demo uses simulated jobs and needs no API key. Other examples have their
+own model choices and environment or service requirements. Consult the
+[examples guide](examples.md) and the source of the demo you want to run.
+
+## Next steps
+
+- [Model providers](model-providers.md) — Configure another provider or a local server.
+- [Tools](tools.md) — Add functions and configure tool permissions.
+- [Middleware](middleware.md) — Extend model calls and agent behavior.
+- [Deployment](deployment.md) — Integrate with an HTTP service or workspace backend.
+- [Stability and limits](../STABILITY.md) — Check compatibility and deployment boundaries.
