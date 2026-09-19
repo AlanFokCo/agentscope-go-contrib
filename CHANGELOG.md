@@ -70,6 +70,8 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 - Add a library coverage gate, PR checklist and reproducible local coverage
   commands. Raise the initial 65.0% floor to 66.5% in CI, Makefile and contributor
   instructions; examples remain outside the library coverage measurement.
+  Expand package-local stream reconstruction tests and print package coverage
+  in CI, retaining coverage profiles for diagnosing platform differences.
 - Correct release history: entries already present in the `v2.0.10` tag are
   grouped under that version below instead of remaining under `[Unreleased]`.
 

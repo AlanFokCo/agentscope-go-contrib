@@ -46,10 +46,21 @@ jobs:
           # -coverpkg would measure a different (cross-package) metric.
           go test -coverprofile=coverage.out ./... >/dev/null
           printf "total ./...     : "; go tool cover -func=coverage.out | tail -1
-          go test -coverprofile=coverage-pkg.out ./pkg/... >/dev/null
+          go test -coverprofile=coverage-pkg.out ./pkg/...
           total=$(go tool cover -func=coverage-pkg.out | tail -1 | awk '{print $NF}' | tr -d '%')
           echo "total ./pkg/... : ${total}% (floor ${COVERAGE_MIN}%)"
           awk -v t="$total" -v min="$COVERAGE_MIN" 'BEGIN { if (t+0 < min+0) { print "ERROR: coverage below floor"; exit 1 } }'
+
+      - name: Upload coverage profiles
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-ubuntu-go1.25
+          path: |
+            coverage.out
+            coverage-pkg.out
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Fuzz smoke (safety parsers)
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'

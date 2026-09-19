@@ -154,7 +154,9 @@ establish that the other jobs pass.
   explicit justification and is a blocking review finding, not a way to pass CI.
 - Measure `./pkg/...` separately with `go test -coverprofile`; do not substitute
   the `./...` profile or add `-coverpkg` when checking this floor. Those measure
-  different coverage attribution. Examples must compile but are outside the
+  different coverage attribution. Build constraints also change the denominator:
+  verify a proposed floor against the Ubuntu CI result before relying on a
+  measurement from another OS. Examples must compile but are outside the
   library coverage gate.
 - Report before/after coverage for touched Go packages using the same toolchain,
   package selection and test flags. Inspect `go tool cover -func` for the affected
