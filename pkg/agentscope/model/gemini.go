@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpx"
@@ -145,9 +146,9 @@ func (m *GeminiChatModel) buildRequest(msgs []*message.Msg, callOpts *CallOption
 		role := string(msg.Role)
 
 		if role == "system" {
-			txt := ""
-			if t := msg.GetTextContent("\n"); t != nil {
-				txt = *t
+			txt := geminiTextContent(msg)
+			if txt == "" {
+				continue
 			}
 			systemInstruction = &geminiContent{
 				Parts: []geminiPart{{Text: txt}},
@@ -199,8 +200,8 @@ func (m *GeminiChatModel) buildRequest(msgs []*message.Msg, callOpts *CallOption
 		}
 
 		// Text content
-		if txt := msg.GetTextContent("\n"); txt != nil {
-			parts = append(parts, geminiPart{Text: *txt})
+		if txt := geminiTextContent(msg); txt != "" {
+			parts = append(parts, geminiPart{Text: txt})
 		}
 
 		if len(parts) > 0 {
@@ -489,4 +490,16 @@ func processGeminiStream(ctx context.Context, sseCh <-chan httpx.SSEEvent, outCh
 	case outCh <- finalResp:
 	case <-ctx.Done():
 	}
+}
+
+// geminiTextContent filters empty blocks before joining so separators cannot
+// turn an otherwise empty message into provider content. Whitespace is retained.
+func geminiTextContent(msg *message.Msg) string {
+	var texts []string
+	for _, block := range msg.GetContentBlocks(message.ContentBlockText) {
+		if text, ok := block.(message.TextBlock); ok && text.Text != "" {
+			texts = append(texts, text.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
 }

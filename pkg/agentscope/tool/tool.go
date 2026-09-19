@@ -28,6 +28,21 @@ type Tool interface {
 	IsExternalTool() bool
 }
 
+// InputValidator optionally adds semantic checks to a tool's input schema.
+// Implementations must not mutate input. The toolkit invokes it after schema
+// validation; UnifiedAgent also invokes it before an external handoff.
+type InputValidator interface {
+	ValidateInput(input map[string]any) error
+}
+
+// ExternalResultValidator optionally checks a successful external result against
+// the original input. Implementations must not mutate either argument. Error
+// and denied results do not require successful-result metadata and are skipped.
+// A validation failure becomes an error tool result in the agent event stream.
+type ExternalResultValidator interface {
+	ValidateExternalResult(input map[string]any, result *message.ToolResultBlock) error
+}
+
 // ToolResponse is the result of executing a tool.
 type ToolResponse struct {
 	Content  []message.ContentBlock
@@ -301,6 +316,11 @@ func (tk *Toolkit) callResolvedTool(ctx context.Context, name string, input map[
 		// so the caller's map is never rewritten behind their back.
 		input = jsonx.CoerceToSchema(input, schema)
 		if err := ValidateInput(schema, input); err != nil {
+			return NewErrorResponse(fmt.Errorf("input validation: %w", err)), nil
+		}
+	}
+	if validator, ok := t.(InputValidator); ok {
+		if err := validator.ValidateInput(input); err != nil {
 			return NewErrorResponse(fmt.Errorf("input validation: %w", err)), nil
 		}
 	}

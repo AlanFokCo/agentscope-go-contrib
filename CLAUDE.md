@@ -72,6 +72,18 @@ checkpoint schema compatibility and pending-tool state when changing recovery.
 Read [checkpoint tests](pkg/agentscope/agent/checkpoint_test.go) and
 [loop bridge tests](pkg/agentscope/agent/loop_bridge_test.go) for those boundaries.
 
+External tools use [external_tools.go](pkg/agentscope/agent/external_tools.go)
+for input validation, host handoff and successful-result validation. Restored
+submitted calls pass through the current toolkit and permissions before handoff;
+missing or no-longer-external tools must be rejected before asking permission.
+External metadata flows through recorded results, `ToolResultEndEvent` and
+`Msg.AppendEvent`. Preserve complete external block output in state and the order
+of supported text/data events; event data-size limits still apply.
+
+`console.Launch` returns the caller's context error at prompts, confirmations and
+active replies. SIGINT during a reply cancels only that reply. The caller owns
+input readers; Launch cannot unblock an arbitrary reader without its owner's help.
+
 ### Messages, formatting and model calls
 
 `message.Msg` carries typed blocks, including text, thinking, tool calls/results,
@@ -85,6 +97,12 @@ live in `model/`; OpenAI Chat Completions and Responses have separate
 implementations. Shared types or options do not prove that every provider
 serializes a field or interprets it identically. Trace request construction and
 response parsing in both call paths.
+
+Anthropic requests use its public formatter. Gemini builds requests separately
+in `model/gemini.go`: formatter support for media inside hints does not establish
+adapter support. Both paths filter empty text before joining or emitting it;
+nonempty whitespace remains content. Multi-agent formatting must associate each
+output with its original sender before filtering messages.
 
 For provider work:
 
@@ -151,6 +169,14 @@ Tools implement `tool.Tool`, commonly by embedding `BaseTool`. The toolkit and
 Adding a tool requires examining schema validation, error behavior, cancellation
 and the relevant permission checks; registration alone does not provide them.
 Do not weaken existing safety checks to make a new path work.
+
+`tool.InputValidator` is optional semantic validation after schema checks;
+`tool.ExternalResultValidator` validates successful external results against their
+input. Keep the required `Tool` interface unchanged when adding such hooks.
+[AskUser](pkg/agentscope/tool/ask_user.go) uses both hooks and is opt-in. Its host
+must configure a permission context, consume `ReplyStream` and submit actual user
+answers; the [offline example](examples/ask_user/main.go) deliberately simulates
+those answers. See [the host contract](docs/tools.md#askuser) for limits and errors.
 
 File and command tools can use a `tool.Backend` from the context.
 `workspace.NewToolBackend` adapts a workspace for use with `tool.WithBackend`.

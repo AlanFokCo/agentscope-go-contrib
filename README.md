@@ -18,7 +18,8 @@ contexts and channels, and can be embedded in a service or command-line program.
 ## What you can build
 
 - **Tool-using assistants:** connect model calls to Go functions, manage context
-  and request human confirmation for tool execution.
+  and request human confirmation for tool execution. Use [AskUser](docs/tools.md#askuser)
+  to collect structured choices through your own frontend.
 - **Multi-agent workflows:** coordinate agents with pipelines, message routing
   and leader/worker teams.
 - **Applications with memory:** combine retrieval, conversation state and memory
@@ -33,11 +34,9 @@ available model ID. Other adapters are listed under [Model providers](#model-pro
 
 ### Install in your application
 
-This README follows `main`. Published release tags currently use the former
-module path; use `@main` for the community module path shown here until a release
-is published under it. Go records the resolved revision in `go.mod`. See the
-[module migration notes](CHANGELOG.md#changed--repository-and-module-path-move)
-for existing applications.
+Install the latest tagged release from the community module path. Applications
+using `github.com/alanfokco/agentscope-go/v2` need to update their import prefix;
+see the [module migration notes](CHANGELOG.md#changed--repository-and-module-path-move).
 
 From a new directory:
 
@@ -45,7 +44,7 @@ From a new directory:
 mkdir agentscope-demo
 cd agentscope-demo
 go mod init example.com/agentscope-demo
-go get github.com/agentscope-ai/agentscope-go/v2@main
+go get github.com/agentscope-ai/agentscope-go/v2@latest
 ```
 
 ### Create an agent
@@ -151,6 +150,7 @@ its model choice, environment variables and required services or runtimes.
 | [react_tool](examples/react_tool/) | A custom FunctionTool |
 | [react_builtin_tools](examples/react_builtin_tools/) | The built-in coding toolkit |
 | [streaming](examples/streaming/) | Agent lifecycle events |
+| [ask_user](examples/ask_user/) | Structured questions with a simulated model and host answer |
 | [console](examples/console/) | Terminal chat and tool-call confirmation |
 | [model_call](examples/model_call/) | Direct model streaming, tool calls and structured output |
 | [structured_output](examples/structured_output/) | Structured output through tool calling |

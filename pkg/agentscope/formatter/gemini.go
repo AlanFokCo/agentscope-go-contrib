@@ -1,6 +1,8 @@
 package formatter
 
 import (
+	"strings"
+
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
@@ -28,16 +30,21 @@ func (f *GeminiFormatter) Format(msgs []*message.Msg) ([]map[string]any, error) 
 }
 
 func (f *GeminiFormatter) FormatMultiAgent(msgs []*message.Msg, currentAgent string) ([]map[string]any, error) {
-	formatted, err := f.Format(msgs)
-	if err != nil {
-		return nil, err
-	}
-	for i, m := range formatted {
-		if i < len(msgs) && msgs[i] != nil && msgs[i].Name != "" && msgs[i].Name != currentAgent {
+	var formatted []map[string]any
+	for _, msg := range msgs {
+		if msg == nil || msg.Role == message.RoleSystem {
+			continue
+		}
+		m := f.formatMsg(msg)
+		if m == nil {
+			continue
+		}
+		if msg.Name != "" && msg.Name != currentAgent {
 			parts, _ := m["parts"].([]map[string]any)
-			namePrefix := map[string]any{"text": "[" + msgs[i].Name + "]: "}
+			namePrefix := map[string]any{"text": "[" + msg.Name + "]: "}
 			m["parts"] = append([]map[string]any{namePrefix}, parts...)
 		}
+		formatted = append(formatted, m)
 	}
 	return formatted, nil
 }
@@ -50,10 +57,7 @@ func (f *GeminiFormatter) formatMsg(msg *message.Msg) map[string]any {
 
 	blocks := msg.GetContentBlocks()
 	if len(blocks) == 0 {
-		return map[string]any{
-			"role":  role,
-			"parts": []map[string]any{{"text": ""}},
-		}
+		return nil
 	}
 
 	var parts []map[string]any
@@ -86,7 +90,16 @@ func (f *GeminiFormatter) formatMsg(msg *message.Msg) map[string]any {
 				},
 			})
 		case message.HintBlock:
-			parts = append(parts, map[string]any{"text": blk.GetHintText()})
+			for _, sub := range hintContent(blk) {
+				switch h := sub.(type) {
+				case message.TextBlock:
+					parts = append(parts, map[string]any{"text": h.Text})
+				case message.DataBlock:
+					if formatted := formatGeminiDataBlock(h); formatted != nil {
+						parts = append(parts, formatted)
+					}
+				}
+			}
 		case message.DataBlock:
 			if formatted := formatGeminiDataBlock(blk); formatted != nil {
 				parts = append(parts, formatted)
@@ -130,9 +143,15 @@ func formatGeminiDataBlock(blk message.DataBlock) map[string]any {
 func ExtractGeminiSystemInstruction(msgs []*message.Msg) map[string]any {
 	for _, msg := range msgs {
 		if msg != nil && msg.Role == message.RoleSystem {
-			if txt := msg.GetTextContent("\n"); txt != nil {
+			var texts []string
+			for _, block := range msg.GetContentBlocks(message.ContentBlockText) {
+				if text, ok := block.(message.TextBlock); ok && text.Text != "" {
+					texts = append(texts, text.Text)
+				}
+			}
+			if len(texts) > 0 {
 				return map[string]any{
-					"parts": []map[string]any{{"text": *txt}},
+					"parts": []map[string]any{{"text": strings.Join(texts, "\n")}},
 				}
 			}
 		}

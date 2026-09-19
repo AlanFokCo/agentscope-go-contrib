@@ -414,6 +414,8 @@ func (a *UnifiedAgent) SubmitUserConfirm(result *event.UserConfirmResultEvent) {
 // stream. Results whose IDs match no pending call are parked for other
 // waiters (batched results); the wait ends only on a matching result or
 // context cancellation.
+// Submission transfers ownership of the result objects and their nested maps
+// and slices to the agent. Do not mutate them after this call.
 func (a *UnifiedAgent) SubmitExternalResult(result *event.ExternalExecutionResultEvent) {
 	if a.externalCh != nil {
 		a.externalCh <- *result
@@ -840,6 +842,11 @@ func (a *UnifiedAgent) executeToolCallWithPermission(
 	tc *message.ToolCallBlock,
 	actingHandler middleware.ActingHandler,
 ) toolOutcome {
+	wasSubmitted := tc.State == message.ToolCallSubmitted
+	if t := a.toolkit.Get(tc.Name); wasSubmitted && (t == nil || !t.IsExternalTool()) {
+		return a.emitToolResult(ctx, ch, replyID, tc, message.ToolResultError,
+			fmt.Sprintf("submitted tool %q is no longer an active external tool", tc.Name))
+	}
 	if a.engine != nil && tc.State != message.ToolCallAllowed {
 		t := a.toolkit.Get(tc.Name)
 		if t == nil {
@@ -889,30 +896,12 @@ func (a *UnifiedAgent) executeToolCallWithPermission(
 
 	// Check if this is an external tool — pause and wait for external result.
 	t := a.toolkit.Get(tc.Name)
+	if wasSubmitted && (t == nil || !t.IsExternalTool()) {
+		return a.emitToolResult(ctx, ch, replyID, tc, message.ToolResultError,
+			fmt.Sprintf("submitted tool %q is no longer an active external tool", tc.Name))
+	}
 	if t != nil && t.IsExternalTool() {
-		a.updateToolCallState(tc.ID, message.ToolCallSubmitted)
-		emit(ctx, ch, event.NewToolResultStartEvent(replyID, tc.ID, tc.Name))
-		emit(ctx, ch, event.NewRequireExternalExecutionEvent(replyID, []message.ToolCallBlock{*tc}))
-		result := a.waitForExternalResult(ctx, tc.ID)
-		if result == nil {
-			// ToolResultStart was already emitted when the call was
-			// submitted; emit only the delta/end so consumers never see a
-			// duplicate start for the same call (upstream #2167).
-			const reason = "External execution timed out, canceled, or no matching result was submitted"
-			emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, reason))
-			emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, message.ToolResultError))
-			return toolOutcome{state: message.ToolResultError, text: reason}
-		}
-		outputText := result.GetOutputText()
-		emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, outputText))
-		emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, result.State))
-		// An externally submitted result may itself carry blocks (e.g. a
-		// screenshot produced outside the process); preserve them.
-		var extra []message.ContentBlock
-		if list, ok := result.Output.([]message.ContentBlock); ok {
-			extra = nonTextBlocks(list)
-		}
-		return toolOutcome{state: result.State, text: outputText, extra: extra}
+		return a.executeExternalTool(ctx, ch, replyID, tc, t, wasSubmitted)
 	}
 
 	return a.executeTool(ctx, ch, replyID, tc, actingHandler)
@@ -1426,9 +1415,12 @@ type toolResult struct {
 // non-text blocks turned an image read into an EMPTY tool result, which the
 // model reads as "the file is empty".
 type toolOutcome struct {
-	state message.ToolResultState
-	text  string
-	extra []message.ContentBlock
+	state    message.ToolResultState
+	text     string
+	extra    []message.ContentBlock
+	metadata map[string]any
+	// externalOutput preserves the submitted block sequence without flattening it.
+	externalOutput any
 }
 
 // nonTextBlocks returns the blocks of a tool response that are not text,
@@ -1548,11 +1540,15 @@ func (a *UnifiedAgent) executeAndRecord(
 	outcome := a.executeToolCallWithPermission(ctx, ch, replyID, tc, actingHandler)
 
 	resultBlock := message.ToolResultBlock{
-		Type:   "tool_result",
-		ID:     tc.ID,
-		Name:   tc.Name,
-		Output: toolResultOutput(outcome.text, outcome.extra),
-		State:  outcome.state,
+		Type:     "tool_result",
+		ID:       tc.ID,
+		Name:     tc.Name,
+		Output:   toolResultOutput(outcome.text, outcome.extra),
+		State:    outcome.state,
+		Metadata: outcome.metadata,
+	}
+	if outcome.externalOutput != nil {
+		resultBlock.Output = outcome.externalOutput
 	}
 	a.saveToContext([]message.ContentBlock{resultBlock}, nil)
 	a.updateToolCallState(tc.ID, message.ToolCallFinished)

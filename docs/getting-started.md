@@ -6,17 +6,16 @@ Use Go 1.25 or newer. The example below needs an Anthropic API key and a model
 ID available to that account. You can choose a different adapter using the
 [provider guide](model-providers.md).
 
-This guide follows `main`. Published tags still use the former module path, so
-install the current community module with `@main` until a release uses that path.
-Go records the resolved revision in `go.mod`; commit `go.mod` and `go.sum` with
-your application. See the [migration notes](../CHANGELOG.md#changed--repository-and-module-path-move)
-for existing applications.
+Install the latest tagged release from the community module path. Commit
+`go.mod` and `go.sum` with your application. If you use the former
+`github.com/alanfokco/agentscope-go/v2` path, update your imports as described in
+the [migration notes](../CHANGELOG.md#changed--repository-and-module-path-move).
 
 ```bash
 mkdir agentscope-demo
 cd agentscope-demo
 go mod init example.com/agentscope-demo
-go get github.com/agentscope-ai/agentscope-go/v2@main
+go get github.com/agentscope-ai/agentscope-go/v2@latest
 ```
 
 ## Create an agent

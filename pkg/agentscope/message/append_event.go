@@ -193,6 +193,9 @@ func (m *Msg) AppendEvent(ev any) {
 				if idx >= 0 {
 					if tr, ok := m.Content[idx].(ToolResultBlock); ok {
 						tr.State = se.GetState()
+						if metadata, ok := ev.(interface{ GetMetadata() map[string]any }); ok {
+							tr.Metadata = metadata.GetMetadata()
+						}
 						m.Content[idx] = tr
 					}
 				}

@@ -19,6 +19,11 @@ arguments and external requirements. Some use fixtures or simulated devices;
 others need a model service, credentials, local tools or a running backend.
 A compiled example is not evidence that an external integration has been tested.
 
+For structured questions, run `go run ./examples/ask_user`. It uses a scripted
+model and a simulated host answer, without credentials or user interaction.
+A real application must collect the user's response through its own frontend;
+see the [AskUser contract](tools.md#askuser).
+
 ## Catalog
 
 | Example | Demonstrates |
@@ -28,6 +33,7 @@ A compiled example is not evidence that an external integration has been tested.
 | [react_tool](../examples/react_tool/) | A custom FunctionTool |
 | [react_builtin_tools](../examples/react_builtin_tools/) | The built-in coding toolkit |
 | [streaming](../examples/streaming/) | Agent lifecycle events |
+| [ask_user](../examples/ask_user/) | Structured questions with a simulated model and host answer |
 | [console](../examples/console/) | Terminal chat and tool-call confirmation |
 | [model_call](../examples/model_call/) | Direct model streaming, tool calls and structured output |
 | [structured_output](../examples/structured_output/) | Structured output through tool calling |

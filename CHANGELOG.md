@@ -11,97 +11,72 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
-### Changed — README and onboarding
+## [v2.0.11] - 2026-09-19
 
-- Reorganize the English and Spanish READMEs around installation, a complete
-  first-agent example, documentation and community contribution. Keep the full
-  example catalog available in a collapsible section.
-- Align the getting-started and examples guides with the current module path,
-  distinguish application setup from running a repository checkout, and clarify
-  agent events, provider streaming and simulated example behavior.
+### Added
 
-### Changed — contributor guidance
+- Opt-in `tool.AskUserTool()` with typed questions and answers, semantic input
+  validation and successful external-result validation. Hosts collect responses
+  through `UnifiedAgent.ReplyStream` and `SubmitExternalResult`; a permission
+  context is required. The offline `examples/ask_user` uses a simulated model
+  and answer. The stock console and loop runner do not supply an AskUser UI.
+- Optional `tool.InputValidator` and `tool.ExternalResultValidator` interfaces,
+  without changing the required `Tool` interface. AskUser rejects mismatched,
+  duplicate or missing answers; invalid successful results become error results.
 
-- Reorganize `AGENTS.md` around focused contributions, evidence-based issue
-  triage, community communication and independent evaluator review. Clarify
-  validation commands, coverage reporting and authorized delivery to `main`.
-- Replace the feature inventory in `CLAUDE.md` with source navigation and
-  implementation contracts, including provider request verification, context
-  sizing, streaming, permissions and persistence boundaries.
+### Fixed
+
+- External tool metadata now survives recorded agent state, terminal events and
+  message reconstruction. Multi-block external output retains all text and data
+  in state, including on checkpoint resume; supported events keep their order.
+- Restored submitted calls now check the current active external tool, input and
+  permissions before handoff. A missing, inactive or no-longer-external tool
+  produces an error result rather than prompting for permission or running locally.
+- Anthropic/Gemini formatters omit empty text and hints while preserving supported
+  hint media, nonempty whitespace and sender attribution after filtering. Gemini
+  request construction also filters empty ordinary/system text before joining it.
+  This does not add general multimodal hints to the Gemini model adapter.
+- `console.Launch` returns caller cancellation/deadline errors at the input prompt,
+  during confirmation and while consuming a reply, without waiting for the event
+  producer to close. SIGINT during a reply still interrupts only that reply.
 
 ### Changed — repository and module path move
 
-- **BREAKING (import path only)**: the repository moved to the AgentScope
-  community org — `github.com/alanfokco/agentscope-go` →
-  **`github.com/agentscope-ai/agentscope-go`**. The module path is now
-  `github.com/agentscope-ai/agentscope-go/v2`, so consumer imports change from
-  `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...` to
-  `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`. Every package
-  name, API, option and behavior is identical, so migrating is a mechanical
-  search-and-replace of the import prefix followed by `go mod tidy`.
-- **The new path is installable only from the first tag cut after this commit.**
-  No published version carries it yet: `v2.0.4`–`v2.0.10` each declare
-  `module github.com/alanfokco/agentscope-go/v2` in their `go.mod`, and the
-  module proxy lists those same tags under the new path too, where
-  `go get github.com/agentscope-ai/agentscope-go/v2@latest` fails with
-  `module declares its path as github.com/alanfokco/agentscope-go/v2 ... but was
-  required as github.com/agentscope-ai/agentscope-go/v2`. Consumers keep
-  importing the old path — those versions stay resolvable from the proxy — until
-  a release is tagged from this commit, and only then run:
+- **BREAKING (import path):** the repository and module moved from
+  `github.com/alanfokco/agentscope-go/v2` to
+  `github.com/agentscope-ai/agentscope-go/v2`. `v2.0.11` is the first tag declaring
+  the new module path; `v2.0.4`–`v2.0.10` declare the former path.
+- Change imports from `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...`
+  to `github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/...`, then run:
 
   ```bash
-  go get github.com/agentscope-ai/agentscope-go/v2@latest
+  go get github.com/agentscope-ai/agentscope-go/v2@v2.0.11
   go mod tidy
   ```
 
-  The `pkg.go.dev` page that the badge in `README.md`/`README.es-ES.md` links to
-  returns 404 for the same reason (the badge image itself still renders) and
-  starts resolving once that release is published.
-- The `retract` block in `go.mod` (phantom `v2.1.0`/`v2.1.1`, tagged then
-  deleted) is deliberately unchanged, and it stays inert: the go command reads
-  retractions from the *highest* published version's `go.mod`, and `v2.1.1.mod`
-  carries no `retract` directive — `go list -m
-  github.com/alanfokco/agentscope-go/v2@latest` still resolves to the deleted
-  `v2.1.1`. A retraction only takes effect in a release numbered higher than
-  `v2.1.1` whose `go.mod` still declares the old path, and nothing on `main` can
-  produce one any more — every commit from this one on declares the new path; it
-  would take a deliberate tag cut from a `v2.0.10` maintenance branch. Until
-  then, old-path consumers have to pin a real version, e.g. `@v2.0.10`, because
-  `@latest` on the old path silently resolves to the deleted `v2.1.1`, whose zip
-  the proxy still serves. Under the new path the phantom versions were never
-  listed, so its `@latest` resolves to a version that actually exists as soon as
-  a release is tagged from this commit.
-- Inside this repository the rename covers the `go.mod` module line, the 366 Go
-  files under `pkg/` and `examples/` that import the module path (606 Go files
-  exist there in total), and the docs (`README.md`, `README.es-ES.md`,
-  `getting-started.md`, `STABILITY.md`, `CLAUDE.md`, `AGENTS.md`, `docs/`),
-  including the `pkg.go.dev` badge URLs and the `go get` instructions. Verified
-  with `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...`
-  (122 packages) and `golangci-lint run ./...` (0 issues); `go mod tidy -diff`
-  is empty and `go.sum` is untouched.
+  The path rename itself is mechanical. This release also changes behavior as
+  listed above; see [STABILITY.md](STABILITY.md#v2011-behavior-and-compatibility).
+  Avoid mixing old-path and new-path packages: their Go types are distinct.
+- Deleted old-path tags `v2.1.0` and `v2.1.1` remain available from the Go proxy
+  and can outrank `v2.0.x` for `@latest`. The existing retractions cannot correct
+  that from the new module path. Consumers staying on the old path should pin
+  a real tag such as `v2.0.10`; consumers migrating should use the new path above.
 
-### Changed — community docs and a CI coverage gate
+### Changed — documentation and contribution checks
 
-- `AGENTS.md` and `CLAUDE.md` rewritten for the community repository:
-  `AGENTS.md` gains an entry-point table (CONTRIBUTING, CODE_OF_CONDUCT,
-  SECURITY, CHANGELOG, `docs/`), contribution/release/security pointers, a
-  mandatory coverage policy and the Conventional-Commit-style subject
-  convention the repo already uses, and drops the release-notes dump that
-  duplicated `STABILITY.md`/`CHANGELOG.md`. `CLAUDE.md` keeps the architecture
-  map, gains a testing/coverage section, and fixes stale claims (`vendor/`
-  never existed in the tree; the drifting enumerated examples list is gone).
-- **Coverage is now a commit gate**: CI fails when statement coverage of
-  `./pkg/...` drops below `COVERAGE_MIN` (**65.0 %**, set in
-  `.github/workflows/ci.yml` and mirrored as the `make cover-check` default),
-  and `make cover` / `make cover-check` reproduce
-  the measurement locally. Baseline at introduction: ≈59.6 % for `./...` and
-  ≈66.6 % for `./pkg/...`; `examples/` are untested demos by design and are
-  excluded from the gate but still must compile.
-- `.github/PULL_REQUEST_TEMPLATE.md` checklist gains a coverage line and a
-  CHANGELOG line; `AGENTS.md` documents the docs-update obligations (README
-  examples table, `README.es-ES.md` in the same commit, `docs/`, the `CLAUDE.md`
-  architecture map, CHANGELOG entry).
-- No library behavior changes; build, vet, `-race` tests and lint are unaffected.
+- Reorganize the English and Spanish READMEs, installation and examples guides,
+  contributor instructions and architecture map. Document the AskUser host
+  contract, validation and current implementation limits.
+- Add a library coverage gate, PR checklist and reproducible local coverage
+  commands. Raise the initial 65.0% floor to 66.5% in CI, Makefile and contributor
+  instructions; examples remain outside the library coverage measurement.
+- Correct release history: entries already present in the `v2.0.10` tag are
+  grouped under that version below instead of remaining under `[Unreleased]`.
+
+Upstream references, selected ports and deferred capabilities are recorded in
+[the v2.0.11 design](docs/design/upstream-sync-v2.0.11.md).
+
+## [v2.0.10] - 2026-09-09
 
 ### Added — upstream sync batch (Python 8/14–9/7 window)
 
@@ -950,7 +925,7 @@ so a truncated stream is reported but not retried.
 ### Changed
 - **BREAKING**: module path migrated to `/v2` — import
   `github.com/alanfokco/agentscope-go/v2/pkg/agentscope/...` (the repository has
-  since moved to `github.com/agentscope-ai/agentscope-go`; see `[Unreleased]` →
+  since moved to `github.com/agentscope-ai/agentscope-go`; see `[v2.0.11]` →
   "Changed — repository and module path move")
 - Deprecated `ReActAgent`; examples migrated to `UnifiedAgent`
 

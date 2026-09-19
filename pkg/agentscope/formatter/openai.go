@@ -212,10 +212,7 @@ func (f *AnthropicFormatter) formatMsg(msg *message.Msg) map[string]any {
 
 	blocks := msg.GetContentBlocks()
 	if len(blocks) == 0 {
-		return map[string]any{
-			"role":    role,
-			"content": "",
-		}
+		return nil
 	}
 
 	var content []map[string]any
@@ -267,10 +264,16 @@ func (f *AnthropicFormatter) formatMsg(msg *message.Msg) map[string]any {
 			}
 			content = append(content, trBlock)
 		case message.HintBlock:
-			content = append(content, map[string]any{
-				"type": "text",
-				"text": blk.GetHintText(),
-			})
+			for _, sub := range hintContent(blk) {
+				switch h := sub.(type) {
+				case message.TextBlock:
+					content = append(content, map[string]any{"type": "text", "text": h.Text})
+				case message.DataBlock:
+					if formatted := f.formatAnthropicDataBlock(h); formatted != nil {
+						content = append(content, formatted)
+					}
+				}
+			}
 		case message.DataBlock:
 			if formatted := f.formatAnthropicDataBlock(blk); formatted != nil {
 				content = append(content, formatted)
@@ -318,21 +321,25 @@ func (f *AnthropicFormatter) formatAnthropicDataBlock(blk message.DataBlock) map
 // FormatMultiAgent formats messages for multi-agent Anthropic conversations.
 // Uses <history> tags for conversation context from other agents.
 func (f *AnthropicFormatter) FormatMultiAgent(msgs []*message.Msg, currentAgent string) ([]map[string]any, error) {
-	formatted, err := f.Format(msgs)
-	if err != nil {
-		return nil, err
-	}
-
-	for i, m := range formatted {
+	var formatted []map[string]any
+	for _, msg := range msgs {
+		if msg == nil || msg.Role == message.RoleSystem {
+			continue
+		}
+		m := f.formatMsg(msg)
+		if m == nil {
+			continue
+		}
 		role, _ := m["role"].(string)
-		if (role == "user" || role == "assistant") && i < len(msgs) && msgs[i] != nil {
-			if msgs[i].Name != "" && msgs[i].Name != currentAgent {
+		if role == "user" || role == "assistant" {
+			if msg.Name != "" && msg.Name != currentAgent {
 				if content, ok := m["content"].([]map[string]any); ok && len(content) > 0 {
-					nameBlock := map[string]any{"type": "text", "text": "[" + msgs[i].Name + "]:"}
+					nameBlock := map[string]any{"type": "text", "text": "[" + msg.Name + "]:"}
 					m["content"] = append([]map[string]any{nameBlock}, content...)
 				}
 			}
 		}
+		formatted = append(formatted, m)
 	}
 
 	return formatted, nil

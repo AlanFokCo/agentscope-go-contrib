@@ -251,9 +251,12 @@ func TestResume_BatchExternalResultsNotLost(t *testing.T) {
 			}),
 		},
 	}
+	// Restored calls resolve against the current toolkit and permissions.
+	permCtx := permission.NewContext(permission.ModeDefault)
+	permCtx.AllowRules["ext_tool"] = []permission.Rule{{ToolName: "ext_tool", Behavior: permission.BehaviorAllow}}
 	a := NewUnifiedAgent("cp-agent", "helpful", mock,
-		WithToolkit(tool.NewToolkit(echoToolFixtureA())),
-		WithPermissionContext(permission.NewContext(permission.ModeDefault)),
+		WithToolkit(tool.NewToolkit(newHITLMockTool("ext_tool", true))),
+		WithPermissionContext(permCtx),
 		WithReactConfig(ReactConfig{MaxIters: 4}),
 		WithState(restored),
 	)

@@ -154,27 +154,9 @@ func (a *UnifiedAgent) repromptAwaitingCalls(ctx context.Context, ch chan<- even
 
 	for i := range submitted {
 		tc := submitted[i]
-		// Note: with a deadline-free ctx and an external system that never
-		// resubmits, this waits until the ctx is canceled — same contract
-		// as the normal SUBMITTED flow.
-		emit(ctx, ch, event.NewRequireExternalExecutionEvent(replyID, []message.ToolCallBlock{tc}))
-		result := a.waitForExternalResult(ctx, tc.ID)
-		if result == nil {
-			a.saveToContext([]message.ContentBlock{message.ToolResultBlock{
-				Type:   "tool_result",
-				ID:     tc.ID,
-				Name:   tc.Name,
-				Output: "No external result submitted after resume",
-				State:  message.ToolResultError,
-			}}, nil)
-			a.updateToolCallState(tc.ID, message.ToolCallFinished)
-			handled = true
-			continue
-		}
-		result.ID = tc.ID
-		result.Name = tc.Name
-		a.saveToContext([]message.ContentBlock{*result}, nil)
-		a.updateToolCallState(tc.ID, message.ToolCallFinished)
+		// A restored call must honor the current toolkit, permissions and
+		// validators. Reuse normal recording and event assembly as well.
+		a.executeAndRecord(ctx, ch, replyID, &tc, actingHandler)
 		handled = true
 	}
 

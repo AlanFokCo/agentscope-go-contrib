@@ -452,6 +452,10 @@ func (e ToolResultEndEvent) GetEventType() EventType { return EventToolResultEnd
 func (e ToolResultEndEvent) GetEventID() string      { return e.ID }
 func (e ToolResultEndEvent) GetReplyID() string      { return e.ReplyID }
 
+// GetMetadata exposes structured tool output to message stream reconstruction.
+// The returned map belongs to the event and must be treated as read-only.
+func (e ToolResultEndEvent) GetMetadata() map[string]any { return e.Metadata }
+
 func NewToolResultEndEvent(replyID, toolCallID string, state message.ToolResultState) ToolResultEndEvent {
 	return ToolResultEndEvent{Base: newBase(), ReplyID: replyID, ToolCallID: toolCallID, State: state}
 }

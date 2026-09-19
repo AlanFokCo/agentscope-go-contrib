@@ -20,6 +20,8 @@ o en un programa de línea de comandos.
 
 - **Asistentes con herramientas:** conecta llamadas al modelo con funciones de
   Go, gestiona el contexto y solicita confirmación para ejecutar herramientas.
+  Usa [AskUser](docs/tools.md#askuser) para recoger respuestas estructuradas
+  mediante tu propia interfaz.
 - **Flujos con varios agentes:** coordina agentes mediante pipelines,
   enrutamiento de mensajes y equipos de líder y trabajadores.
 - **Aplicaciones con memoria:** combina recuperación de información, estado de
@@ -35,11 +37,9 @@ y un identificador de modelo disponible. Hay otros adaptadores en
 
 ### Instalar en tu aplicación
 
-Este README describe `main`. Las etiquetas de versiones publicadas todavía usan
-la ruta anterior del módulo; utiliza `@main` con la ruta de la comunidad indicada
-aquí hasta que se publique una versión con ella. Go guarda la revisión resuelta
-en `go.mod`. Consulta las [notas de migración del módulo](CHANGELOG.md#changed--repository-and-module-path-move)
-para aplicaciones existentes.
+Instala la última versión etiquetada desde la ruta del módulo de la comunidad.
+Las aplicaciones que usan `github.com/alanfokco/agentscope-go/v2` deben cambiar
+el prefijo de sus imports; consulta las [notas de migración del módulo](CHANGELOG.md#changed--repository-and-module-path-move).
 
 Desde un directorio nuevo:
 
@@ -47,7 +47,7 @@ Desde un directorio nuevo:
 mkdir agentscope-demo
 cd agentscope-demo
 go mod init example.com/agentscope-demo
-go get github.com/agentscope-ai/agentscope-go/v2@main
+go get github.com/agentscope-ai/agentscope-go/v2@latest
 ```
 
 ### Crear un agente
@@ -157,6 +157,7 @@ necesarios.
 | [react_tool](examples/react_tool/) | Una FunctionTool personalizada |
 | [react_builtin_tools](examples/react_builtin_tools/) | Herramientas integradas de programación |
 | [streaming](examples/streaming/) | Eventos del ciclo de ejecución del agente |
+| [ask_user](examples/ask_user/) | Preguntas estructuradas con un modelo y una respuesta del anfitrión simulados |
 | [console](examples/console/) | Chat en terminal y confirmación de herramientas |
 | [model_call](examples/model_call/) | Streaming del modelo, herramientas y salida estructurada |
 | [structured_output](examples/structured_output/) | Salida estructurada mediante llamadas a herramientas |

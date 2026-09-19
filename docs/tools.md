@@ -6,13 +6,13 @@ Tools give agents the ability to execute actions. The `Tool` interface embeds `p
 
 ## Built-in Tools
 
-There are **24** tool names registered in `pkg/agentscope/tool` (verify with
-`git grep -hoE 'ToolName:[[:space:]]+"[^"]+"' -- 'pkg/agentscope/tool/*.go' ':!*_test.go' | sort -u | wc -l`). Two
-more live outside that package: `kubectl_get` / `kubectl_logs` in `workspace/` and
-`DeviceTool` / `SensorTool` in `device/`.
+The tools below are available from `pkg/agentscope/tool`. Registration is
+explicit; the enhanced toolkit includes only the coding tools listed below.
+Workspace and device packages provide additional tools.
 
 | Tool | Description | Safety |
 |------|-------------|--------|
+| `AskUser` | Collect structured choices through an external host | Opt-in; validates questions and answers; permission rules still apply |
 | `Bash` | Execute shell commands | AST-level injection detection, dangerous path protection, read-only command recognition, interpreter-attack detection |
 | `execute_shell_command` | Bare shell execution (`command` + optional `timeout`) | **None of `Bash`'s analysis.** No AST injection check, no interpreter-attack check, no read-only classification; `CheckPermissions` is the `BaseTool` passthrough. Register `Bash` unless you specifically need this shape |
 | `Read` | Read files with line numbers, `offset`/`limit` (default 2000 lines, 1 MB file cap). Images come back as base64 `DataBlock`s | Path validation, per-line truncation at 2000 chars, `MaxInlineImageBytes` (256 KB) image cap |
@@ -36,8 +36,8 @@ more live outside that package: `kubectl_get` / `kubectl_logs` in `workspace/` a
 | `task_update` | Update task status/fields | Mutates the task store; dependency tracking |
 
 `tool.NewEnhancedToolkit()` returns the coding-agent core: `Bash`, `Read`,
-`Write`, `Edit`, `MultiEdit`, `ApplyPatch`, `Glob` and `Grep`. That is 8 of the
-24. Everything else is opt-in:
+`Write`, `Edit`, `MultiEdit`, `ApplyPatch`, `Glob` and `Grep`. Everything else is
+opt-in:
 
 ```go
 // The coding-agent core (8 tools):
@@ -57,6 +57,88 @@ tool.BashTool(
     tool.WithCwd("/path/to/workdir"),  // set working directory
 )
 ```
+
+## AskUser
+
+`tool.AskUserTool()` lets a model ask structured questions through your
+application's frontend. It is an external tool: the host presents the questions,
+collects the user's choices or free text, and submits the result to the agent.
+Register it only in an application that supports this interaction.
+
+```go
+assistant := agent.NewUnifiedAgent("assistant", "Help the user.", cm,
+    agent.WithToolkit(tool.NewToolkit(tool.AskUserTool())),
+    agent.WithPermissionContext(permission.NewContext(permission.ModeDefault)),
+)
+```
+
+Here `cm` is your `model.ChatModel`. The permission context is required: it also
+initializes the channels used for confirmation and external-result submission.
+Consume `assistant.ReplyStream` and handle both `RequireUserConfirmEvent` and
+`RequireExternalExecutionEvent`; plain `Reply`, the loop runner and the stock
+console do not provide an AskUser UI. The complete
+[offline example](../examples/ask_user/main.go) shows the event flow with a scripted
+model and a simulated answer. It does not demonstrate real user authorization.
+
+### Questions and answers
+
+Input uses `AskUserParams`, containing one to four `AskUserQuestion` values.
+Each question has unique question text, a nonblank header of at most 12 Unicode
+code points, and two to four `AskUserOption` values. Option labels are unique
+within a question; labels and descriptions must be nonblank. `Context` carries
+supporting material. `MultiSelect` enables multiple choices; `Preview` is allowed
+only for single-select questions. The host should always offer free-text input,
+without adding a synthetic "Other" option.
+
+For each external call, use its ID and name in the submitted `ToolResultBlock`.
+A successful result has readable `Output` plus structured `Metadata`. For example,
+the metadata for the question "Which client language?" with an option labeled
+"Go" is:
+
+```json
+{
+  "answers": [
+    {"question": "Which client language?", "selected": ["Go"]}
+  ]
+}
+```
+
+The exported `AskUserMetadata` and `AskUserAnswer` types match this JSON shape.
+`Metadata` itself is a `map[string]any`; `map[string]any{"answers": answers}`
+accepts a typed `[]tool.AskUserAnswer`. Include exactly one answer for every
+question, using its exact text. Selected labels must belong to that question
+and must not repeat. A single-select answer accepts at most one label. Every
+answer needs a selection or nonblank `other` free text; free text may accompany
+a selection. Answer order need not match question order.
+
+### Validation, permissions and recovery
+
+Invalid input becomes an error tool result before external handoff. Successful
+answers are checked against the original questions; invalid success metadata
+becomes an error result without retaining that metadata. Error, denied and
+interrupted results do not require answers. `SubmitExternalResult` returns no
+error: observe `ToolResultEndEvent` for the outcome. Submission transfers ownership
+of the result and its nested values; do not mutate them afterward.
+
+AskUser allows the question interaction at the tool level in normal permission
+modes. Explicit deny/ask rules still apply; `ModeDontAsk` denies the tool. Asking
+or answering a question does not authorize another tool action. The host remains
+responsible for collecting a real response and applying its own access controls.
+
+Checkpoint resume checks that a submitted call still names an active external
+tool and honors current permissions and validation before requesting execution.
+Missing, inactive or no-longer-external tools produce error results. Validated
+metadata survives recorded results, terminal events and `Msg.AppendEvent`.
+Multi-block external output is retained in state, with supported text/data events
+emitted in order subject to the existing event data-size cap. Reading all text
+from a block list requires inspecting `Output`; `GetOutputText()` returns only
+the first text block.
+
+Custom tools can implement the optional `tool.InputValidator` for semantic input
+checks after schema validation, and `tool.ExternalResultValidator` to validate
+successful external results. The required `Tool` interface is unchanged. See the
+[upstream design](design/upstream-sync-v2.0.11.md) for Python references and the
+intentional differences in permission and invalid-result handling.
 
 ## Custom Function Tools
 
@@ -286,8 +368,9 @@ Whether the model actually sees the pixels depends on the provider:
 Nothing wires the model's capabilities into the tool layer yet, so Read cannot
 decline to return an image for a model that cannot see it, and the model gets the
 placeholder. The data is already in the repo: bundled model cards carry
-`InputTypes` and `ModelCard.SupportsImages()`, and every provider implements the
-`ModelNamer` interface that `model.ResolveContextSize` uses to look a card up.
+`InputTypes` and `ModelCard.SupportsImages()`. `model.ResolveContextSize` can look
+up a card through `ModelNamer`, but most provider adapters do not implement that
+optional interface.
 Upstream additionally checks a `model_input_types` field this repo does not
 have.
 
@@ -299,9 +382,9 @@ fileSize/4 tokens. 256 KB is about 64k tokens, already a large fraction of a
 context window, and a 1 MB screenshot would be about 250k tokens and trigger an
 immediate compression.
 
-`ToolResultBlock.Output` is a plain `string` for text-only results and a
-`[]message.ContentBlock` when a tool returned something non-text. Use
-`GetOutputText()` when you only want the text.
+`ToolResultBlock.Output` can be a plain `string` or a `[]message.ContentBlock`.
+`GetOutputText()` returns the string or the first text block; inspect the block
+list to consume all text and media.
 
 ## Agent-driven compression (upstream #2143)
 

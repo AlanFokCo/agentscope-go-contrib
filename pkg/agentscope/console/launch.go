@@ -76,6 +76,9 @@ func WithOutput(w io.Writer) LaunchOption {
 // Running two Launch calls in one process is unsupported: SIGINT is
 // broadcast to both sessions.
 func Launch(ctx context.Context, a Agent, opts ...LaunchOption) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cfg := launchConfig{
 		userName:           "user",
 		verbosity:          VerbosityDefault,
@@ -126,13 +129,16 @@ func Launch(ctx context.Context, a Agent, opts ...LaunchOption) error {
 		select {
 		case lr, ok = <-lines:
 			if !ok {
-				return nil // input exhausted
+				return ctx.Err() // input exhausted, unless the caller canceled
 			}
 		case <-sigCh:
 			fmt.Fprintln(cfg.out)
 			return nil
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		query := strings.TrimSpace(lr.line)
 		if lr.err != nil {
@@ -192,7 +198,18 @@ func runReply(
 		return err
 	}
 
-	for evt := range ch {
+consume:
+	for {
+		var evt event.Event
+		select {
+		case <-replyCtx.Done():
+			break consume
+		case next, ok := <-ch:
+			if !ok {
+				break consume
+			}
+			evt = next
+		}
 		renderer.Render(evt)
 		ce, ok := evt.(event.RequireUserConfirmEvent)
 		if !ok {

@@ -6,7 +6,10 @@ production-hardening status of the library.
 ## Versioning
 
 The module path is `github.com/agentscope-ai/agentscope-go/v2`. The latest release
-tag is `v2.0.10`. Consumers import as:
+tag is `v2.0.11`, the first tag declaring the community module path. Earlier tags
+use `github.com/alanfokco/agentscope-go/v2`; upgrading requires the
+[import-prefix migration](CHANGELOG.md#changed--repository-and-module-path-move).
+Consumers import as:
 
 ```go
 import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
@@ -43,6 +46,38 @@ recorded as `BREAKING (behavior)` in `CHANGELOG.md`.
 it with `GetOutputText()` or a comma-ok assertion, since a bare `.(string)`
 panics on an image tool result. `tool.ReadCache.Get*` return copies, so mutating
 the returned entry no longer affects the cache.
+
+## v2.0.11 behavior and compatibility
+
+- `tool.AskUserTool()` is an opt-in external tool. Its typed question/answer
+  values and the optional `InputValidator` and `ExternalResultValidator`
+  interfaces add APIs without changing the required `Tool` interface.
+  Use `UnifiedAgent.ReplyStream` with a permission context and a host that handles
+  external execution and permission confirmation. `Reply`, the loop bridge and
+  the stock console do not supply an AskUser UI. `ModeDontAsk` denies AskUser;
+  explicit permission rules remain effective in other modes.
+- Restored submitted tool calls now check the current toolkit, permissions and
+  input before handoff. Calls whose tool is missing, inactive or no longer
+  external become error results. Invalid successful answers become error
+  results; `SubmitExternalResult` still returns no error. Hosts should inspect
+  the terminal event and must not mutate submitted results afterward.
+- External result metadata survives agent state and event reconstruction.
+  Multi-block external outputs retain all blocks in recorded state; supported
+  text/data events preserve their order, subject to the existing event data cap.
+  A normal single-text result retains its string representation; resumed
+  results retain their submitted representation. `GetOutputText()` returns only
+  the first text block of a block list; inspect `Output` to read every block.
+- Anthropic/Gemini formatters omit empty text and hints while retaining supported
+  hint media and sender names after filtering. Whitespace is preserved. Gemini's
+  model adapter separately omits empty ordinary/system text; it does not gain
+  general multimodal hint support.
+- `console.Launch` returns `context.Canceled` or `context.DeadlineExceeded` when
+  its caller context ends at a prompt, confirmation or active reply. SIGINT
+  during a reply still interrupts only that reply. A caller-owned reader blocked
+  on I/O may outlive Launch; its owner must close it to release the read.
+
+The [upstream comparison](docs/design/upstream-sync-v2.0.11.md) records the selected
+ports and deferred work, including realtime/TUI, SOP and model-context wiring.
 
 ## Error handling
 
