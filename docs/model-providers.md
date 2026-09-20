@@ -130,6 +130,23 @@ cm, _ := model.NewXAIChatModel(model.XAIConfig{
 
 Models: `grok-3`, `grok-3-fast`, `grok-3-mini`, `grok-4.3`
 
+## Tool-call history in OpenAI-compatible chat
+
+**Unreleased fix for [#7](https://github.com/agentscope-ai/agentscope-go/issues/7):**
+the formatter now expands a merged agent reply into an assistant message with
+`tool_calls`, one `role: "tool"` message per result, and any subsequent assistant
+messages. Versions v2.0.10 and v2.0.11 could keep only the last tool result from
+such a reply, causing OpenAI or DeepSeek to reject the next request with a missing
+preceding `tool_calls` error.
+
+This follows the result-boundary splitting used by the
+[Python OpenAI formatter](https://github.com/agentscope-ai/agentscope/blob/5ff52f877de12d66a30d55af279dd4f42b1590f3/src/agentscope/formatter/_openai_formatter.py#L343).
+The Go fix retains the existing provider-specific text, thinking and media
+conversion. Agent state and checkpoint formats are unchanged. Direct users of
+`OpenAIFormatter.Format` or `FormatMultiAgent` should allow multiple output
+messages per input message. Custom histories must still supply matching tool-call
+IDs and results in the correct order.
+
 ## Text-to-Speech (TTS)
 
 agentscope-go includes TTS models for audio synthesis, usable standalone or via `TTSMiddleware`.

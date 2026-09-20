@@ -148,7 +148,7 @@ establish that the other jobs pass.
 
 ### Coverage and regression policy
 
-- The library statement-coverage floor is **66.5%**. Keep `COVERAGE_MIN` in CI
+- The library statement-coverage floor is **66.9%**. Keep `COVERAGE_MIN` in CI
   and the default in `make cover-check` synchronized. The floor is a ratchet:
   raise it when a change establishes a higher baseline. Lowering it requires an
   explicit justification and is a blocking review finding, not a way to pass CI.
@@ -180,6 +180,12 @@ hardware and distinguish a skipped test from a passing one.
 
 ## Mandatory evaluator review
 
+For issue-driven fixes, use an independent evaluator at two stages: challenge
+the reproduced root cause and proposed fix before implementation, then review
+the final code, tests and documentation. The evaluator should look for an
+alternative explanation, a counterexample that still fails, and regressions
+introduced by the fix. A design PASS does not replace final-diff review.
+
 Before committing and pushing, have an independent evaluator (an adversarial
 reviewer, such as a separate review agent) examine the final diff. Self-review
 alone does not satisfy this gate. Give the evaluator the scope, relevant source,
@@ -203,6 +209,14 @@ by severity and tied to evidence. Resolve correctness and factual findings,
 then submit the revisions for re-review. PASS requires no unresolved blocking
 findings; HIGH-severity findings always block. Keep the review result available
 to the maintainer without committing internal transcripts to the repository.
+
+Before publishing an issue reply, PR description or review, have the evaluator
+review the complete text and its conclusion, including an approval or
+request-changes decision. Claims must match the reviewed revision and distinguish
+local fixtures from live-provider tests, as well as proposed, merged and released
+behavior. Require an explicit publication PASS and verify the posted text matches
+the approved draft. A publication PASS means the communication is sound; it does
+not mean the PR being discussed has passed code review.
 
 Commit only when build, vet, race tests, lint (zero issues), coverage and any
 applicable fuzz checks pass, and the evaluator returns PASS. Use the full suite

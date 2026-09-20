@@ -98,6 +98,12 @@ implementations. Shared types or options do not prove that every provider
 serializes a field or interprets it identically. Trace request construction and
 response parsing in both call paths.
 
+The OpenAI-compatible formatter expands a merged agent message into ordered
+assistant/tool messages, keeping all calls in a round before their results.
+Its output count can exceed the input count. Multi-agent formatting assigns the
+sender before expansion is combined and merges only plain text messages without
+tool calls or reasoning; structured media keeps its message boundary.
+
 Anthropic requests use its public formatter. Gemini builds requests separately
 in `model/gemini.go`: formatter support for media inside hints does not establish
 adapter support. Both paths filter empty text before joining or emitting it;
@@ -106,6 +112,15 @@ output with its original sender before filtering messages.
 
 For provider work:
 
+- Reproduce protocol bugs at the outbound HTTP boundary with the real adapter.
+  An agent test whose model mock ignores history cannot establish correct
+  tool-call/result ordering. Cover both `Chat` and `ChatStream` where they share
+  the affected conversion, plus the agent path that produced the report.
+- Give the independent evaluator the failing request or fixture, source call
+  path, regression result and complete proposed public explanation. Have it
+  challenge the root cause, fix and review conclusion under the gates in
+  [AGENTS.md](AGENTS.md#mandatory-evaluator-review); passing tests alone do not
+  establish those conclusions.
 - Check the exact endpoint, authentication requirements, JSON field names,
   omission rules and option precedence. Use captured HTTP requests in tests;
   checking a Go options struct alone cannot establish the wire format.

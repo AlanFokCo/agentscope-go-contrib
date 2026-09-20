@@ -191,19 +191,24 @@ func formatDataBlock(blk message.DataBlock, supported []string, audioDataURL boo
 // injects "name" field on user/assistant messages, merges consecutive same-role
 // messages with name prefixes.
 func formatMultiAgentOpenAI(base Formatter, msgs []*message.Msg, currentAgent string) ([]map[string]any, error) {
-	formatted, err := base.Format(msgs)
-	if err != nil {
-		return nil, err
-	}
-
-	for i, m := range formatted {
-		role, _ := m["role"].(string)
-		if role == "user" || role == "assistant" {
-			// Find the original msg to get the name
-			if i < len(msgs) && msgs[i] != nil && msgs[i].Name != "" && msgs[i].Name != currentAgent {
-				formatted[i]["name"] = sanitizeName(msgs[i].Name)
+	var formatted []map[string]any
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		parts, err := base.Format([]*message.Msg{msg})
+		if err != nil {
+			return nil, err
+		}
+		// One internal message may expand into several wire messages. Assign
+		// its sender before combining results, rather than matching by index.
+		for _, part := range parts {
+			role, _ := part["role"].(string)
+			if (role == "user" || role == "assistant") && msg.Name != "" && msg.Name != currentAgent {
+				part["name"] = sanitizeName(msg.Name)
 			}
 		}
+		formatted = append(formatted, parts...)
 	}
 
 	return mergeConsecutiveRoles(formatted), nil
@@ -219,9 +224,12 @@ func mergeConsecutiveRoles(msgs []map[string]any) []map[string]any {
 			prev := result[len(result)-1]
 			prevRole, _ := prev["role"].(string)
 			curRole, _ := m["role"].(string)
-			if prevRole == curRole && curRole != "tool" && curRole != "system" {
-				prevContent, _ := prev["content"].(string)
-				curContent, _ := m["content"].(string)
+			prevContent, prevPlain := prev["content"].(string)
+			curContent, curPlain := m["content"].(string)
+			// Text concatenation cannot preserve tool calls, reasoning or media.
+			if prevRole == curRole && curRole != "tool" && curRole != "system" &&
+				prevPlain && curPlain && prev["tool_calls"] == nil && m["tool_calls"] == nil &&
+				prev["reasoning_content"] == nil && m["reasoning_content"] == nil {
 				name, _ := m["name"].(string)
 				if name != "" {
 					curContent = "[" + name + "]: " + curContent
