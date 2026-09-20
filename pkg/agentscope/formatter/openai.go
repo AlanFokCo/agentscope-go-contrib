@@ -16,18 +16,41 @@ type OpenAIFormatter struct {
 	ToolNameInResult bool
 }
 
+// Format expands each internal message into ordered provider messages. A merged
+// agent reply can contain assistant tool calls, tool results and further replies.
 func (f *OpenAIFormatter) Format(msgs []*message.Msg) ([]map[string]any, error) {
 	var result []map[string]any
 	for _, msg := range msgs {
 		if msg == nil {
 			continue
 		}
-		formatted, err := f.formatMsg(msg)
-		if err != nil {
-			return nil, err
+		blocks := msg.GetContentBlocks()
+		var segments [][]message.ContentBlock
+		start := 0
+		for i, block := range blocks {
+			if _, ok := block.(message.ToolResultBlock); !ok {
+				continue
+			}
+			if start < i {
+				segments = append(segments, blocks[start:i])
+			}
+			segments = append(segments, blocks[i:i+1])
+			start = i + 1
 		}
-		if formatted != nil {
-			result = append(result, formatted)
+		if start < len(blocks) || len(blocks) == 0 {
+			segments = append(segments, blocks[start:])
+		}
+		for _, segment := range segments {
+			// Reuse the provider's block conversion without changing stored history.
+			part := *msg
+			part.Content = segment
+			formatted, err := f.formatMsg(&part)
+			if err != nil {
+				return nil, err
+			}
+			if formatted != nil {
+				result = append(result, formatted)
+			}
 		}
 	}
 	return result, nil

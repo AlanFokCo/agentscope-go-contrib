@@ -11,6 +11,14 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI-compatible chat formatting preserves assistant tool calls, every tool
+  result and subsequent replies in merged agent history (#7). This fixes requests
+  that contained a tool result without its preceding assistant `tool_calls`.
+- Multi-agent formatting keeps sender attribution after message expansion and
+  preserves message boundaries carrying tool calls, reasoning or media.
+
 ## [v2.0.11] - 2026-09-19
 
 ### Added
