@@ -11,6 +11,14 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Added
+
+- Experimental `bench.Runner.RunOpenLoop` for finite arrival schedules, bounded
+  callback concurrency, and per-arrival outcomes including rejection, timeout,
+  cancellation, unfinished work, and arrivals not offered before interruption.
+  Reports retain scheduled-arrival latency and remain unchanged after return.
+  This supplies the first load-generation building block for RFC #11.
+
 ### Fixed
 
 - OpenAI-compatible chat formatting preserves assistant tool calls, every tool

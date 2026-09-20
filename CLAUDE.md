@@ -256,6 +256,7 @@ the existence of a helper is not proof that an endpoint uses it.
 | Provider requests, usage and streaming | `model/*_test.go`, [providercontract/](pkg/agentscope/providercontract/) |
 | Deterministic replay | [replay/](pkg/agentscope/replay/), [agent/golden_test.go](pkg/agentscope/agent/golden_test.go) |
 | Task-level evaluation | [replay/evalkit/](pkg/agentscope/replay/evalkit/) |
+| Load generation and scheduled-arrival outcomes | [bench/](pkg/agentscope/bench/), [load-testing guide](docs/benchmarks.md) |
 | Tool safety or backend routing | Adjacent `tool/*_test.go`, `workspace/*_test.go` and parser fuzz targets |
 
 `providercontract` is test support and imports `testing`; do not add it to
