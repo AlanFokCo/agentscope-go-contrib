@@ -18,6 +18,16 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   that contained a tool result without its preceding assistant `tool_calls`.
 - Multi-agent formatting keeps sender attribution after message expansion and
   preserves message boundaries carrying tool calls, reasoning or media.
+- `model.WithMaxTokens` now reaches Ollama, DashScope, DeepSeek, Moonshot and
+  xAI as `max_tokens` (#8). The shared OpenAI-compatible request struct had no
+  JSON tag on the field, so those five adapters sent a supplied limit as
+  `"MaxTokens":<value>`, a key no server reads, and every request from the
+  family (OpenAI included) carried a stray `"MaxTokens":null` when no limit was
+  set. The `providercontract` wall now decodes the captured request and checks
+  the max-tokens value at the provider's wire path on both `Chat` and
+  `ChatStream` for providers with `MaxTokensKey` configured (Anthropic
+  deliberately skips it: its adapter does not apply the per-call option), and
+  registers Ollama and xAI, which were missing from the wall.
 
 ## [v2.0.11] - 2026-09-19
 
