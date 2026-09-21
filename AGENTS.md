@@ -170,9 +170,15 @@ Changes to shell safety checks or content-block parsing require the correspondin
 fuzz smoke in addition to regression tests:
 
 ```bash
-go test -run=x -fuzz='FuzzBashSafety$' -fuzztime=30s ./pkg/agentscope/tool/
-go test -run=x -fuzz='FuzzUnmarshalContentBlocks$' -fuzztime=30s ./pkg/agentscope/message/
+go test -run=x -fuzz='FuzzBashSafety$' -fuzztime=1000000x ./pkg/agentscope/tool/
+go test -run=x -fuzz='FuzzUnmarshalContentBlocks$' -fuzztime=5000000x ./pkg/agentscope/message/
 ```
+
+These are execution-count budgets (`Nx`), including seed replay and minimization,
+not fixed durations or a guarantee of equivalent coverage across runs. They avoid
+the [Go 1.25 timed-fuzz cancellation race](https://github.com/golang/go/issues/75804).
+CI gives the combined fuzz step a separate 10-minute timeout; exceeding it fails
+the job. Keep fuzz assertions and nonzero exit statuses intact.
 
 Run the relevant tagged tests when changing code excluded from the default build
 (for example the `mqtt` build tag). Document any required service, platform or

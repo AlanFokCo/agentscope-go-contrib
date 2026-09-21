@@ -13,6 +13,8 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Fixed
 
+- CI fuzz smoke uses execution-count budgets to avoid spurious Go 1.25 deadline
+  failures, with a separate 10-minute timeout for the combined fuzz step.
 - OpenAI-compatible chat formatting preserves assistant tool calls, every tool
   result and subsequent replies in merged agent history (#7). This fixes requests
   that contained a tool result without its preceding assistant `tool_calls`.
