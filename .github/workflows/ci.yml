@@ -64,9 +64,13 @@ jobs:
 
       - name: Fuzz smoke (safety parsers)
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        # Count budgets avoid Go 1.25's timed-fuzz cancellation race:
+        # https://github.com/golang/go/issues/75804
+        # A stalled run still fails this independent step timeout.
+        timeout-minutes: 10
         run: |
-          go test -run=x -fuzz='FuzzBashSafety$' -fuzztime=30s ./pkg/agentscope/tool/
-          go test -run=x -fuzz='FuzzUnmarshalContentBlocks$' -fuzztime=30s ./pkg/agentscope/message/
+          go test -run=x -fuzz='FuzzBashSafety$' -fuzztime=1000000x ./pkg/agentscope/tool/
+          go test -run=x -fuzz='FuzzUnmarshalContentBlocks$' -fuzztime=5000000x ./pkg/agentscope/message/
 
       - name: Benchmark
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'

@@ -47,8 +47,14 @@ consistent.
    also run the fuzz smoke:
 
    ```bash
-   go test -fuzz=FuzzBashSafety -fuzztime=30s ./pkg/agentscope/tool/
+   go test -run=x -fuzz='FuzzBashSafety$' -fuzztime=1000000x ./pkg/agentscope/tool/
    ```
+
+   The `Nx` budget counts executions instead of elapsed time, avoiding a
+   [Go 1.25 fuzz deadline race](https://github.com/golang/go/issues/75804).
+   CI bounds the combined fuzz step with a separate 10-minute timeout. See
+   [AGENTS.md](AGENTS.md#validation) for the content-block parser fuzz command
+   and the full validation requirements.
 
    Coverage is a commit gate as well: `make cover-check` fails when statement
    coverage of `./pkg/...` drops below `COVERAGE_MIN` (value and rationale in
@@ -108,7 +114,7 @@ consistent.
     summary, decision (allowed/denied/ask), and duration.
   - Sandbox policy enforcement (`sandbox.Policy`) must remain backwards-compatible:
     nil policy = no restrictions (existing behavior).
-  - Always run `go test -fuzz=FuzzBashSafety -fuzztime=30s` after modifying
+  - Always run the shell-safety fuzz smoke above after modifying
     `bash_parser.go` or `safety.go`.
 
 ### Documentation & examples
