@@ -33,6 +33,7 @@ pkg/agentscope/
 │
 ├── bench/                 # Agent load testing
 │   ├── bench.go           # Scenario, Runner, Report, LatencyStats (p50/p95/p99)
+│   ├── open_loop.go       # Finite arrival schedules, bounded callbacks, per-arrival outcomes
 │   └── bench_test.go
 │
 ├── hotreload/             # Hot-reload configuration
@@ -303,6 +304,13 @@ The `access` package implements multi-tenant RBAC with four permission levels (`
 ### Agent Load Testing
 
 The `bench` package provides a `Runner` that executes `Scenario` definitions with configurable concurrency, duration, iterations, and ramp-up. Reports include throughput, latency percentiles (p50/p95/p99), success/failure counts, and error breakdowns.
+
+`Runner.RunOpenLoop` offers work on a finite schedule independently of callback
+completion, bounds admitted callbacks, and retains every planned arrival's
+outcome. Its report separates local rejection, timeout, cancellation, unfinished
+work, and arrivals not offered before interruption. See the
+[load-testing guide](benchmarks.md) for timing and cancellation semantics. These
+callback outcomes do not by themselves measure agent task quality.
 
 ### TCP Agent Mesh
 

@@ -214,7 +214,7 @@ to the same catalog.
 | Models and tools | [Providers](docs/model-providers.md) · [Tools](docs/tools.md) |
 | Middleware and memory | [Middleware](docs/middleware.md) |
 | Application deployment | [Deployment](docs/deployment.md) · [Execution and session limits](docs/adversarial-hardening.md) |
-| Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
+| Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Load testing](docs/benchmarks.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
 | Local models and devices | [Edge deployment](docs/edge-deployment.md) · [Device tools](docs/device-tools.md) · [Multi-device coordination](docs/multi-device.md) · [Offline operation](docs/offline-operation.md) |
 | Implementation and compatibility | [Source map](CLAUDE.md) · [API stability](STABILITY.md) · [Changelog](CHANGELOG.md) |
 
