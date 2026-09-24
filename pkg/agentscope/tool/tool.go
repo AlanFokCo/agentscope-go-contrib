@@ -190,7 +190,7 @@ func NewToolkit(tools ...Tool) *Toolkit {
 		}
 		tk.groups["basic"] = &ToolGroup{
 			GroupName: "basic",
-			Tools:     tools,
+			Tools:     append([]Tool(nil), tools...),
 			Active:    true,
 		}
 	}
@@ -206,7 +206,7 @@ func (tk *Toolkit) AddGroup(name string, tools ...Tool) {
 	}
 	tk.groups[name] = &ToolGroup{
 		GroupName: name,
-		Tools:     tools,
+		Tools:     append([]Tool(nil), tools...),
 		Active:    true,
 	}
 }

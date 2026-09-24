@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/qdrant/go-client/qdrant"
-	"github.com/sirupsen/logrus"
 )
 
 // QdrantTextIndex is a higher-level Index implementation that:
@@ -21,22 +20,25 @@ type QdrantTextIndex struct {
 
 // QdrantTextConfig configures a QdrantTextIndex.
 type QdrantTextConfig struct {
-	Client        *qdrant.Client
-	Collection    string
-	VectorMetaKey string
-	Embedder      Embedder
+	// RequiredFilter is copied and ANDed with every query filter.
+	RequiredFilter MetadataFilter
+	Client         *qdrant.Client
+	Collection     string
+	VectorMetaKey  string
+	Embedder       Embedder
 }
 
 // NewQdrantTextIndex constructs a QdrantTextIndex with an Embedder.
-func NewQdrantTextIndex(cfg QdrantTextConfig) (*QdrantTextIndex, error) {
+func NewQdrantTextIndex(cfg QdrantTextConfig) (*QdrantTextIndex, error) { //nolint:gocritic // preserve the existing value-config API
 	if cfg.Embedder == nil {
 		return nil, fmt.Errorf("qdrant: embedder is required for QdrantTextIndex")
 	}
 
 	base, err := NewQdrantIndex(QdrantConfig{
-		Client:        cfg.Client,
-		Collection:    cfg.Collection,
-		VectorMetaKey: cfg.VectorMetaKey,
+		Client:         cfg.Client,
+		RequiredFilter: cfg.RequiredFilter,
+		Collection:     cfg.Collection,
+		VectorMetaKey:  cfg.VectorMetaKey,
 	})
 	if err != nil {
 		return nil, err
@@ -80,67 +82,23 @@ func (i *QdrantTextIndex) AddDocuments(ctx context.Context, docs []Document) err
 
 // Query embeds the input text and performs a vector similarity search in Qdrant.
 func (i *QdrantTextIndex) Query(ctx context.Context, query string, topK int) ([]Document, error) {
-	if topK <= 0 {
-		topK = 10
-	}
+	return i.QueryWithFilter(ctx, query, topK, nil)
+}
 
+// QueryWithFilter embeds query and applies typed metadata conditions in Qdrant
+// before selecting topK. Caller conditions are ANDed with RequiredFilter; they
+// cannot replace it. Invalid filters fail before the embedding request.
+func (i *QdrantTextIndex) QueryWithFilter(ctx context.Context, query string, topK int, filter MetadataFilter) ([]Document, error) {
+	wireFilter, err := i.qdrant.queryFilter(filter)
+	if err != nil {
+		return nil, err
+	}
 	vecs, err := i.embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("qdrant: embed query: %w", err)
 	}
-	if len(vecs) == 0 {
-		return nil, fmt.Errorf("qdrant: embedder returned no vectors for query")
+	if len(vecs) != 1 {
+		return nil, fmt.Errorf("qdrant: embedder returned %d vectors for one query", len(vecs))
 	}
-	vector := vecs[0]
-
-	// Use Qdrant helper constructors to build a simple nearest-neighbor query.
-	sp, err := i.qdrant.client.Query(ctx, &qdrant.QueryPoints{
-		CollectionName: i.qdrant.collection,
-		Query:          qdrant.NewQuery(vector...),
-		Limit:          &[]uint64{uint64(topK)}[0],
-		WithPayload:    qdrant.NewWithPayload(true),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("qdrant: query points: %w", err)
-	}
-
-	out := make([]Document, 0, len(sp))
-	for _, p := range sp {
-		var id string
-		if pid := p.GetId(); pid != nil {
-			if u := pid.GetUuid(); u != "" {
-				id = u
-			}
-		}
-
-		meta := make(map[string]any, len(p.Payload))
-		for k, v := range p.Payload {
-			meta[k] = v
-		}
-
-		doc := Document{
-			ID:   id,
-			Meta: meta,
-			// Qdrant normalizes every metric so a higher score means more
-			// similar (upstream #2486 direction holds as-is).
-			Score: float64(p.GetScore()),
-		}
-
-		// Try to recover original content if present in payload.
-		if raw, ok := p.Payload["content"]; ok && raw != nil {
-			if sv := raw.GetStringValue(); sv != "" {
-				doc.Content = sv
-			}
-		}
-
-		out = append(out, doc)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"collection": i.qdrant.collection,
-		"topK":       topK,
-		"returned":   len(out),
-	}).Info("qdrant: query completed")
-
-	return out, nil
+	return i.qdrant.queryVector(ctx, vecs[0], topK, wireFilter)
 }

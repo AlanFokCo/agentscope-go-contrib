@@ -180,6 +180,8 @@ its model choice, environment variables and required services or runtimes.
 | [agent_pool](examples/agent_pool/) | A bounded worker pool with simulated jobs |
 | [hotreload](examples/hotreload/) | Typed configuration reloads |
 | [bench](examples/bench/) | Load testing and latency reports |
+| [quality_load](examples/quality_load/) | Task quality under scheduled arrivals, with offline fixtures |
+| [qdrant_filter](examples/qdrant_filter/) | Metadata filtering against a local Qdrant server |
 | [wasm_sandbox](examples/wasm_sandbox/) | WASM runtime discovery and sandbox configuration |
 | [hub_install](examples/hub_install/) | Component registries and installation APIs |
 | [skill_partitions](examples/skill_partitions/) | Per-agent workspace skill directories |
@@ -214,7 +216,7 @@ to the same catalog.
 | Models and tools | [Providers](docs/model-providers.md) · [Tools](docs/tools.md) |
 | Middleware and memory | [Middleware](docs/middleware.md) |
 | Application deployment | [Deployment](docs/deployment.md) · [Execution and session limits](docs/adversarial-hardening.md) |
-| Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Load testing](docs/benchmarks.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
+| Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Load and quality testing](docs/benchmarks.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
 | Local models and devices | [Edge deployment](docs/edge-deployment.md) · [Device tools](docs/device-tools.md) · [Multi-device coordination](docs/multi-device.md) · [Offline operation](docs/offline-operation.md) |
 | Implementation and compatibility | [Source map](CLAUDE.md) · [API stability](STABILITY.md) · [Changelog](CHANGELOG.md) |
 

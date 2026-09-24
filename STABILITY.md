@@ -79,6 +79,35 @@ the returned entry no longer affects the cache.
 The [upstream comparison](docs/design/upstream-sync-v2.0.11.md) records the selected
 ports and deferred work, including realtime/TUI, SOP and model-context wiring.
 
+## Unreleased execution and retrieval behavior
+
+- Synchronous `Reply` checks caller cancellation after draining events and again
+  before returning state, and only selects the current reply ID. Cancellation
+  returns a nil message and a recognizable context error; earlier replies are
+  never returned as the new response. Partial recorded state is retained.
+- Agent retry/fallback waits honor cancellation in both UnifiedAgent and the
+  loop bridge. This does not control hidden retry policies in custom wrappers.
+- Tool-result wire rendering retains all text and bounded unsupported-media
+  placeholders, with native image support preserved in Responses. This changes
+  requests previously missing later blocks; `GetOutputText` retains its legacy
+  first-text behavior. Token estimates include all tool-result text.
+- Toolkit registration owns the slice container; callers cannot replace a
+  registered tool by changing their input slice. Tool objects are still shared.
+- Grep path ordering and per-file limits are stable across pages for an unchanged
+  directory. Blank chunk windows are omitted; nonblank text is not trimmed.
+- Embedding file caches skip oversized entries before eviction and atomically
+  replace accepted JSON entries. A skipped same-key write returns nil and keeps
+  the older value. Use content-addressed keys and treat writes as best effort.
+- Qdrant adds typed metadata filtering without changing required Index methods.
+  The experimental `evalkit.Runner.RunLoad` joins versioned tasks with scheduled arrivals
+  and separate scoring. Existing TaskSpec JSON and YAML field names remain unchanged.
+  Execution failures cannot pass scoring, and workspace cleanup waits for actual
+  core/tool completion; uncooperative code can delay `RunTask` cancellation.
+
+See [retrieval](docs/retrieval.md), [quality/load testing](docs/benchmarks.md) and
+[the delivery contracts](docs/design/managed-inference.md) for API and lifecycle
+limits. Managed admission and model routing remain proposed subsequent changes.
+
 ## Error handling
 
 Errors are structured `*errors.AgentError` (category + code + retryable +
@@ -113,7 +142,7 @@ Landed:
   timeout; `ChatResponse` carries `Error` and `StopReason`.
 - **Durability:** `storage.FileStorage`, runtime file-session saves, and selected
   write paths use `fsutil.WriteFileAtomic` (temp + file fsync + rename). This is
-  not universal: replay FileStore, embedding cache, local backend writes, and
+  not universal: replay FileStore, local backend writes, and
   local Edit/MultiEdit/ApplyPatch still use `os.WriteFile`.
 - **Budgets:** token and duration budgets are enforced on the loop path.
 - **Ops:** HTTP servers set `ReadHeaderTimeout`/`IdleTimeout`/`MaxHeaderBytes` and

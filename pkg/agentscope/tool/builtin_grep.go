@@ -286,6 +286,7 @@ func (t *grepTool) tryRipgrep(ctx context.Context, opts *grepOptions) (*ToolResp
 
 	args := []string{
 		"--no-heading",
+		"--sort", "path",
 		"--max-filesize", "1M",
 	}
 
@@ -339,12 +340,6 @@ func (t *grepTool) tryRipgrep(ctx context.Context, opts *grepOptions) (*ToolResp
 	// File type filter
 	if opts.fileType != "" {
 		args = append(args, "--type", opts.fileType)
-	}
-
-	// Collect more results than needed for pagination
-	maxResults := opts.page * opts.pageSize
-	if opts.outputMode == "content" {
-		args = append(args, "-m", fmt.Sprintf("%d", maxResults))
 	}
 
 	args = append(args, opts.pattern, opts.searchPath)

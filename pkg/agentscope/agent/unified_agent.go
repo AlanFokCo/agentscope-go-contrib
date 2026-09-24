@@ -281,23 +281,35 @@ func NewUnifiedAgent(name, systemPrompt string, m model.ChatModel, opts ...Agent
 // Name returns the agent name.
 func (a *UnifiedAgent) Name() string { return a.name }
 
-// Reply processes input and returns the final assistant message (synchronous).
+// Reply processes input and returns the current assistant message (synchronous).
+// Cancellation is checked after draining events and under the state lock before
+// returning success, including when a terminal event was already received.
+// On cancellation the return message is nil; recorded partial state is retained.
 func (a *UnifiedAgent) Reply(ctx context.Context, input string) (*message.Msg, error) {
 	ch, err := a.ReplyStream(ctx, input)
 	if err != nil {
 		return nil, err
 	}
 
-	// Consume all events
-	for range ch {
+	var replyID string
+	for evt := range ch {
+		if start, ok := evt.(event.ReplyStartEvent); ok {
+			replyID = start.ReplyID
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
-	// After stream ends, find the last assistant message with text content
+	// Match this invocation, never a reply already present in history.
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for i := len(a.state.Context) - 1; i >= 0; i-- {
 		msg := a.state.Context[i]
-		if msg.Role == message.RoleAssistant && msg.Name == a.name {
+		if replyID != "" && msg.ID == replyID && msg.Role == message.RoleAssistant && msg.Name == a.name {
 			return msg, nil
 		}
 	}
@@ -1353,9 +1365,24 @@ func (a *UnifiedAgent) callModel(ctx context.Context, msgs []*message.Msg, opts 
 	var lastErr error
 	for i := 0; i < retries; i++ {
 		if i > 0 {
-			time.Sleep(delay)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		resp, err := a.model.Chat(ctx, msgs, opts...)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if err == nil {
 			return resp, nil
 		}
@@ -1363,7 +1390,13 @@ func (a *UnifiedAgent) callModel(ctx context.Context, msgs []*message.Msg, opts 
 	}
 
 	if a.modelCfg.FallbackModel != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		resp, err := a.modelCfg.FallbackModel.Chat(ctx, msgs, opts...)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if err == nil {
 			return resp, nil
 		}

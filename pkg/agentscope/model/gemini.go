@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/formatter"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpx"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
@@ -172,7 +173,7 @@ func (m *GeminiChatModel) buildRequest(msgs []*message.Msg, callOpts *CallOption
 					FunctionResponse: &geminiFunctionResponse{
 						Name: trb.Name,
 						Response: map[string]any{
-							"result": trb.GetOutputText(),
+							"result": formatter.ConvertToolResultToString(trb.Output),
 						},
 					},
 				})
