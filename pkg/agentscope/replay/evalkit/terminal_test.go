@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
@@ -92,12 +93,22 @@ func TestCollectOutcomeTerminalBoundaries(t *testing.T) {
 
 type laterTurnFailure struct {
 	model.ChatModel
-	calls   int
-	partial bool
+	calls          int
+	partial        bool
+	firstCallDelay time.Duration
 }
 
-func (m *laterTurnFailure) Chat(context.Context, []*message.Msg, ...model.CallOption) (*model.ChatResponse, error) {
+func (m *laterTurnFailure) Chat(ctx context.Context, _ []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
 	m.calls++
+	if m.calls == 1 && m.firstCallDelay > 0 {
+		timer := time.NewTimer(m.firstCallDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	if m.partial {
 		return &model.ChatResponse{Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "partial"}}, Error: errors.New("truncated")}, nil
 	}
@@ -128,7 +139,9 @@ func TestRunTaskRejectsPartialAndLaterTurnFailure(t *testing.T) {
 	}
 }
 func TestRunTaskSetupFailureRetainsEarlierUsage(t *testing.T) {
-	m := &laterTurnFailure{}
+	// Give the latency-preservation assertion measurable work even on clocks
+	// where an instantaneous fixture can start and finish in the same tick.
+	m := &laterTurnFailure{firstCallDelay: 30 * time.Millisecond}
 	r := (&Runner{}).RunTask(context.Background(), &TaskSpec{ID: "empty-turn", Input: "first", Turns: []string{""}, Scorer: ScorerSpec{Ref: "budget"}}, m)
 	if r.Error == "" || r.Pass || r.InputTokens != 20 || r.OutputTokens != 10 || r.Iters != 1 || r.Latency == 0 {
 		t.Fatalf("prior work lost: %+v", r)
