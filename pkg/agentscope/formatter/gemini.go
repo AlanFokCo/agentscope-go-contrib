@@ -86,7 +86,7 @@ func (f *GeminiFormatter) formatMsg(msg *message.Msg) map[string]any {
 			parts = append(parts, map[string]any{
 				"functionResponse": map[string]any{
 					"name":     blk.Name,
-					"response": map[string]any{"result": blk.GetOutputText()},
+					"response": map[string]any{"result": ConvertToolResultToString(blk.Output)},
 				},
 			})
 		case message.HintBlock:

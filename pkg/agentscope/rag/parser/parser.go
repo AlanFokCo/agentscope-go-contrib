@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/rag"
 )
@@ -114,7 +115,7 @@ func ChunkText(text string, cfg ChunkConfig) []string {
 
 	runes := []rune(text)
 	total := len(runes)
-	if total == 0 {
+	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	if total <= cfg.MaxChunkSize {
@@ -132,7 +133,10 @@ func ChunkText(text string, cfg ChunkConfig) []string {
 		if end > total {
 			end = total
 		}
-		chunks = append(chunks, string(runes[start:end]))
+		chunk := string(runes[start:end])
+		if strings.TrimSpace(chunk) != "" {
+			chunks = append(chunks, chunk)
+		}
 		if end == total {
 			break
 		}

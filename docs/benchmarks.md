@@ -97,5 +97,102 @@ does not produce a task-goodput scalar or merge token usage. Join its iteration
 records with application scoring and accounting before comparing harness
 policies. Report all planned and offered outcomes, dispatch delay, completion
 latencies, and unfinished work; separate generator rejection from backend errors.
-The RFC's task corpus, scoring integration, and joined quality/resource report
-remain separate P0 contributions.
+The task-quality integration below adds a versioned corpus and scoring join;
+complete inference-resource accounting remains subsequent work.
+
+## Joining task quality with scheduled arrivals
+
+`evalkit.Runner.RunLoad` connects the open-loop driver to a versioned task corpus
+and a separate, bounded scoring phase. It does not change `RunOpenLoop` semantics.
+The [quality-load example](../examples/quality_load/) includes a JSON manifest and
+runs offline by default:
+
+```bash
+go run ./examples/quality_load > quality-report.json
+```
+
+The offline model returns fixed answers. Its results validate harness behavior;
+they are not evidence of model quality or increased inference capacity. The
+example's optional `-live` mode requires explicit service settings and a source
+revision. Supply the actual model/server/tokenizer revisions, configured context
+window, hardware or quotas, retry/cache policy and experiment group in manifest
+metadata before using a live result for comparisons. The two demonstration tasks
+and substring scorers are not a representative quality benchmark.
+
+`WorkloadManifest.Version` is 1. Pin `TaskSetVersion` and `SourceRevision`, assign a
+unique `RunID`, and declare `Scenario` and a finite `QualityThreshold` in `(0,1]`.
+Task sampling temperatures and cost budgets must also be finite. TaskSpec keeps
+its existing JSON representation with Go field names
+(for example `Budget.MaxIters`, `Budget.MaxInTokens` and `Sampling.Seed`); YAML
+field names are unchanged.
+Each arrival names a task, a positive repeat and an offset. Task IDs and
+(task ID, repeat) pairs must be unique; offsets are nonnegative and nondecreasing.
+The report joins run ID, scenario and **one-based iteration**, preserving task ID
+and repeat. `TaskSpec.Repeat` is used by `RunSuite`; `RunLoad` uses the explicit
+arrival schedule instead.
+
+Pass execution and scoring contexts separately:
+
+```go
+report, err := runner.RunLoad(executionCtx, scoringCtx, manifest, config)
+```
+
+Both contexts must be non-nil. `LoadConfig` and its limits must be non-nil/positive:
+
+| Setting | Bound |
+|---|---|
+| `MaxInFlight` | Actual execution callback wrappers, including model construction and error inspection |
+| `TaskTimeout` | Per-arrival deadline measured from scheduled arrival |
+| `DrainTimeout` | Execution observation allowance after the last arrival |
+| `MaxPendingScores` | Maximum number of task definitions and planned arrivals; bounds retained snapshots/workspaces |
+| `MaxScorers` | Actual scorer workers, including error inspection and workspace cleanup |
+| `ScoreTimeout` | Each scorer's context deadline |
+| `ScorePhaseTimeout` | Whole scoring observation phase |
+
+The runner's `TaskTimeout` additionally bounds each agent execution (default five
+minutes). Effective limits are recorded in `LoadReport.Limits`. The factory must
+provide a fresh model or a model safe for the declared concurrency. A custom
+`Scorer` must support `MaxScorers` concurrent calls; otherwise leave it nil to
+construct each task's declared scorer. Factories may return `ErrAdmissionRejected`
+to identify application admission refusal. Generator rejection remains the
+arrival's `rejected` status; structured provider failures appear separately in
+`TaskResult.ErrorType`.
+
+A task may be scored only when its execution snapshot is successful **and** the
+open-loop driver accepts its callback as `succeeded`. Model errors, partial
+responses, canceled/missing/unknown terminal events, exhausted iterations and
+pending tool interactions cannot pass a budget scorer. The stock evaluation
+runner does not implement a human approval or external-result UI.
+
+Scoring receives the completed output without rerunning the task. Its context is
+independent of the callback contexts, which the driver normally cancels on exit.
+That cleanup cancellation cannot retroactively change accepted execution. A
+scorer can inspect `TaskOutcome.Workspace` only during `Score`; it must not retain
+or access the path after returning. The runner waits for the agent core and tool
+collectors before transferring or removing the workspace. Tools must finish
+workspace access before returning or closing their stream; detached processes
+are a host responsibility. This waiting also means `RunTask` can return late if a
+model or tool ignores cancellation.
+
+A timed-out scorer keeps its worker slot while still running. Uncooperative
+execution/scoring may outlive the observation interval, retaining at most
+`MaxInFlight`/`MaxScorers` workers from that invocation. Their late results are
+discarded and their workspaces are cleaned up after they return. Terminate these
+workers before repeating a run. `ScorePhaseTimeout` bounds scoring observation;
+filesystem cleanup after observation may add return latency.
+
+`Results` retains all planned arrivals and separates `not_executed`,
+`execution_failed`, `execution_unfinished`, `unscored`, `score_unfinished`,
+`score_error` and `scored`. A scored task can still fail its quality threshold.
+`CallbackEnteredAt` records observed callback entry; `Arrival.StartedAt` continues
+to mean generator authorization. `CompletionSamples` and `Latencies` include only
+accepted completions, excluding unfinished zero latencies. Execution and scoring
+observation times are separate. Reports are detached from late task/score writes.
+
+`Goodput` is quality-passing tasks accepted before their scheduled deadline per
+observed execution second; it is absent for a zero-length interval. Always read
+it together with planned/offered/authorized/entered counts, failures and unfinished
+work. Current token/cost fields retain evalkit's existing accounting limitations:
+unknown usage and hidden attempts are not a complete ledger. Shared admission,
+physical-attempt accounting and comparative routing experiments remain subsequent
+work in the [managed inference design](design/managed-inference.md).

@@ -10,6 +10,10 @@ import (
 
 // TaskOutcome carries everything observable about one task run for scoring.
 type TaskOutcome struct {
+	ErrorType string // structured reply error classification, when available
+	// Workspace is borrowed by the scorer while Score runs. Do not retain it
+	// or access it after returning; the runner removes it after scoring.
+	Workspace         string
 	FinalText         string
 	Trajectory        []string // tool names in call order
 	Iters             int      // model calls observed

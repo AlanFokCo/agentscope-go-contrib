@@ -92,7 +92,7 @@ func (f *OpenAIFormatter) formatMsg(msg *message.Msg) (map[string]any, error) {
 		case message.ToolResultBlock:
 			isToolResult = true
 			toolResultID = blk.ID
-			toolResultContent = blk.GetOutputText()
+			toolResultContent = ConvertToolResultToString(blk.Output)
 			toolResultName = blk.Name
 		case message.HintBlock:
 			textParts = append(textParts, blk.GetHintText())

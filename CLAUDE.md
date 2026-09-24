@@ -90,7 +90,10 @@ input readers; Launch cannot unblock an arbitrary reader without its owner's hel
 data and hints. Preserve provider metadata when transforming blocks. Tool results
 can contain structured or multimodal content; use their accessors or checked type
 switches instead of assuming `Output` is a string. Inspect the relevant formatter
-for the supported media types and wire representation.
+for the supported media types and wire representation. Tool-result wire rendering
+uses all text blocks and bounded unsupported-media placeholders. The shared token
+estimator includes every tool text block; it remains an estimate. The legacy
+GetOutputText accessor still returns only the first text block.
 
 `model.ChatModel` defines `Chat`, `ChatStream` and `CountTokens`. Provider adapters
 live in `model/`; OpenAI Chat Completions and Responses have separate
@@ -224,6 +227,22 @@ and pointers when state crosses goroutines or is restored from a checkpoint.
 hardening helpers. Inspect authentication, body limits, timeouts and shutdown at
 the actual handler/server boundary. Reuse existing helpers where appropriate;
 the existence of a helper is not proof that an endpoint uses it.
+
+### Retrieval and task-quality evaluation
+
+[Typed Qdrant filters](pkg/agentscope/rag/metadata_filter.go) address literal
+metadata keys; query constraints are ANDed with copied host conditions before
+embedding and topK selection. [Retrieval contracts](docs/retrieval.md) document
+reserved fields, numeric precision and cache semantics.
+
+[evalkit load execution](pkg/agentscope/replay/evalkit/load.go) joins scheduled
+arrivals with versioned task-quality results. Execution snapshots and workspaces
+have a single owner. Wait for per-turn core completion before transferring them;
+the public ReplyStream forwarder may close earlier on cancellation. Scoring has
+its own contexts and worker limits. Never inspect an old callback context during
+later scoring to revise accepted execution, or let late workers write a returned
+report. See [managed inference contracts](docs/design/managed-inference.md) for
+the implemented/proposed path matrix.
 
 ## Go conventions
 

@@ -187,6 +187,8 @@ necesarios.
 | [agent_pool](examples/agent_pool/) | Pool de trabajadores limitado con tareas simuladas |
 | [hotreload](examples/hotreload/) | Recarga de configuración con tipos |
 | [bench](examples/bench/) | Pruebas de carga e informes de latencia |
+| [quality_load](examples/quality_load/) | Calidad de tareas con llegadas programadas y respuestas simuladas |
+| [qdrant_filter](examples/qdrant_filter/) | Filtros de metadatos con un servidor Qdrant local |
 | [wasm_sandbox](examples/wasm_sandbox/) | Detección de runtimes WASM y configuración del sandbox |
 | [hub_install](examples/hub_install/) | Registros de componentes y API de instalación |
 | [skill_partitions](examples/skill_partitions/) | Directorios de habilidades por agente |

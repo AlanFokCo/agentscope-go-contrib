@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Typed Qdrant metadata equality/range filters, applied before topK through
+  `QueryVector` and `QueryWithFilter`, with copied host-required conditions.
+- Experimental `evalkit.Runner.RunLoad`: versioned task/arrival manifests,
+  independent bounded scoring, retained workspaces, immutable joined outcomes
+  and quality goodput. Includes offline quality/load and local Qdrant examples.
+
 - Experimental `bench.Runner.RunOpenLoop` for finite arrival schedules, bounded
   callback concurrency, and per-arrival outcomes including rejection, timeout,
   cancellation, unfinished work, and arrivals not offered before interruption.
@@ -20,6 +26,22 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   This supplies the first load-generation building block for RFC #11.
 
 ### Fixed
+
+- Synchronous agent replies propagate cancellation and select only the current
+  reply; retries and fallback stop after cancellation in both execution entries.
+- Qdrant ingestion no longer panics by passing `[]float32` vectors as payload
+  metadata. It validates vectors, stores them in the native vector field and
+  returns unsupported metadata errors before submitting a batch.
+- Evaluation rejects failed, partial, canceled or incomplete replies before
+  scoring, preserves multi-turn usage, and waits for tool completion before
+  workspace cleanup.
+- Tool-result requests retain all text and bounded media placeholders; token
+  estimates include later tool text. Responses retains native tool images.
+- Toolkit registration copies caller slices. Grep sorts by path and keeps its
+  per-file limit independent of pagination. Text chunking drops blank windows.
+- Embedding file caches skip individually oversized writes without evicting valid
+  entries, handle size-limit overflow, and atomically replace accepted JSON files.
+  Skipped same-key writes intentionally preserve the old value.
 
 - CI fuzz smoke uses execution-count budgets to avoid spurious Go 1.25 deadline
   failures, with a separate 10-minute timeout for the combined fuzz step.

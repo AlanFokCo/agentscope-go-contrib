@@ -46,7 +46,13 @@ func ConvertToolResultToString(output any) string {
 				parts = append(parts, tb.Text)
 			} else if db, ok := b.(message.DataBlock); ok {
 				mt := db.GetMediaType()
-				if src, ok := db.Source.(message.URLSource); ok {
+				if len(mt) == 0 || len(mt) > 64 || strings.ContainsAny(mt, "\r\n") {
+					mt = "media"
+				}
+				// URLs may themselves contain inline data. Only retain short,
+				// ordinary URLs in a text-only placeholder.
+				src, ok := db.Source.(message.URLSource)
+				if ok && len(src.URL) <= 256 && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(src.URL)), "data:") {
 					parts = append(parts, fmt.Sprintf("[%s: %s]", mt, src.URL))
 				} else {
 					parts = append(parts, fmt.Sprintf("[%s data]", mt))

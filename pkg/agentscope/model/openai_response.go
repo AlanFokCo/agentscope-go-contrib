@@ -13,6 +13,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/formatter"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
@@ -617,7 +618,7 @@ scanLoop:
 func formatToolResultOutput(blk *message.ToolResultBlock) any {
 	list, ok := blk.Output.([]message.ContentBlock)
 	if !ok {
-		return blk.GetOutputText()
+		return formatter.ConvertToolResultToString(blk.Output)
 	}
 	hasImage := false
 	for _, sub := range list {
@@ -627,7 +628,7 @@ func formatToolResultOutput(blk *message.ToolResultBlock) any {
 		}
 	}
 	if !hasImage {
-		return blk.GetOutputText()
+		return formatter.ConvertToolResultToString(blk.Output)
 	}
 	parts := make([]map[string]any, 0, len(list))
 	for _, sub := range list {
@@ -636,6 +637,7 @@ func formatToolResultOutput(blk *message.ToolResultBlock) any {
 			parts = append(parts, map[string]any{"type": "input_text", "text": b.Text})
 		case message.DataBlock:
 			if !strings.HasPrefix(b.GetMediaType(), "image/") {
+				parts = append(parts, map[string]any{"type": "input_text", "text": formatter.ConvertToolResultToString([]message.ContentBlock{b})})
 				continue
 			}
 			switch src := b.Source.(type) {
@@ -646,11 +648,13 @@ func formatToolResultOutput(blk *message.ToolResultBlock) any {
 					"type":      "input_image",
 					"image_url": "data:" + src.MediaType + ";base64," + src.Data,
 				})
+			default:
+				parts = append(parts, map[string]any{"type": "input_text", "text": formatter.ConvertToolResultToString([]message.ContentBlock{b})})
 			}
 		}
 	}
 	if len(parts) == 0 {
-		return blk.GetOutputText()
+		return formatter.ConvertToolResultToString(blk.Output)
 	}
 	return parts
 }

@@ -3,10 +3,13 @@ package embedding
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/fsutil"
 )
 
 // FileEmbeddingCache stores embedding vectors as JSON files in a directory,
@@ -32,6 +35,9 @@ func NewFileEmbeddingCache(dir string, maxFiles, maxSizeMB int) (*FileEmbeddingC
 	}, nil
 }
 
+// Store makes a best-effort cache write. An encoded entry larger than the
+// size limit is skipped, returning nil and preserving any previous value.
+// Use content-addressed keys; a skipped write does not invalidate an old key.
 func (c *FileEmbeddingCache) Store(key string, embeddings [][]float32) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -41,8 +47,12 @@ func (c *FileEmbeddingCache) Store(key string, embeddings [][]float32) error {
 		return fmt.Errorf("embedding cache: marshal: %w", err)
 	}
 
+	if c.maxSizeMB > 0 && int64(len(data)) > c.maxBytes() {
+		return nil
+	}
+
 	path := filepath.Join(c.dir, key+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := fsutil.WriteFileAtomic(path, data, 0644); err != nil {
 		return fmt.Errorf("embedding cache: write: %w", err)
 	}
 
@@ -109,7 +119,7 @@ func (c *FileEmbeddingCache) maintain() {
 	var files []fileEntry
 	var totalSize int64
 	for _, e := range entries {
-		if filepath.Ext(e.Name()) != ".json" {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
 		info, err := e.Info()
@@ -128,7 +138,7 @@ func (c *FileEmbeddingCache) maintain() {
 		return files[i].modTime < files[j].modTime
 	})
 
-	maxBytes := int64(c.maxSizeMB) * 1024 * 1024
+	maxBytes := c.maxBytes()
 
 	for len(files) > 0 {
 		overFileLimit := c.maxFiles > 0 && len(files) > c.maxFiles
@@ -141,4 +151,13 @@ func (c *FileEmbeddingCache) maintain() {
 		totalSize -= oldest.size
 		files = files[1:]
 	}
+}
+
+// maxBytes saturates before multiplying so large positive limits stay unbounded
+// by representable file sizes, including on 32-bit platforms.
+func (c *FileEmbeddingCache) maxBytes() int64 {
+	if c.maxSizeMB <= 0 || int64(c.maxSizeMB) > math.MaxInt64/(1024*1024) {
+		return math.MaxInt64
+	}
+	return int64(c.maxSizeMB) * 1024 * 1024
 }

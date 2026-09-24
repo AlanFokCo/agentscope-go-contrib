@@ -351,13 +351,22 @@ func countTokensByBytes(msgs []*message.Msg, tools []ToolSchema) int {
 			case message.ToolCallBlock:
 				total += len(blk.Input)
 			case message.ToolResultBlock:
-				total += len(blk.GetOutputText())
+				if text, ok := blk.Output.(string); ok {
+					total += len(text)
+				}
 				// A multimodal tool result (e.g. Read on an image, upstream
 				// #2114) stores its payload as a block list; counting only
 				// the text would under-report the base64 image by orders of
 				// magnitude and defeat the context-size guard.
 				if list, ok := blk.Output.([]message.ContentBlock); ok {
-					for _, sub := range list {
+					for index, sub := range list {
+						// Include separators inserted by text rendering.
+						if index > 0 {
+							total++
+						}
+						if text, ok := sub.(message.TextBlock); ok {
+							total += len(text.Text)
+						}
 						db, isData := sub.(message.DataBlock)
 						if !isData {
 							continue
