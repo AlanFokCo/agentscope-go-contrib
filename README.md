@@ -221,7 +221,7 @@ to the same catalog.
 | Setup and a first agent | [Getting started](docs/getting-started.md) |
 | Models and tools | [Providers](docs/model-providers.md) · [Tools](docs/tools.md) |
 | Managed text tasks | [Fixed-deployment execution, limits and accounting](docs/managed-task.md) |
-| Probabilistic classification | [Classifier API and attempt accounting](docs/classifier.md) |
+| Probabilistic classification | [Classifier API and attempt accounting](docs/classifier.md) · [Jev adapter](docs/jev.md) |
 | Middleware and memory | [Middleware](docs/middleware.md) |
 | Application deployment | [Deployment](docs/deployment.md) · [Execution and session limits](docs/adversarial-hardening.md) |
 | Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Load and quality testing](docs/benchmarks.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
