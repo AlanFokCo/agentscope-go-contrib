@@ -102,6 +102,19 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   128000-token default even though one cloud call can fall back to a smaller
   local model. Behavior change: when both members report windows above 128000,
   the wrapper now resolves to the smaller of them instead of 128000.
+- `model.ResolveContextSize` resolves a `FallbackChatModel` to the smallest
+  resolved window among all the models it may call, and context compression
+  takes the smaller of the agent model's window and that of
+  `agent.ModelConfig.FallbackModel` when one is set (#8). Both previously
+  ignored the models tried after the first, so a request that fell back to a
+  smaller model could exceed its window before compression ran.
+  `FallbackChatModel.ContextSize` and `ModelName` still report the first model
+  only. Behavior change: a chain can now resolve to a smaller window, because
+  later members count, or to a larger one. With a `ConnectivityAwareModel` as
+  its first model, a chain previously fell back to the 128000-token default
+  because that wrapper implements neither `ContextSizer` nor `ModelNamer`; it
+  now uses the wrapper's resolved window, which can exceed 128000 when both of
+  its models report larger windows.
 
 ## [v2.0.11] - 2026-09-19
 
