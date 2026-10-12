@@ -102,6 +102,19 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   128000-token default even though one cloud call can fall back to a smaller
   local model. Behavior change: when both members report windows above 128000,
   the wrapper now resolves to the smaller of them instead of 128000.
+- Ollama thinking models no longer lose their reasoning (#8). Ollama returns it
+  in a string `reasoning` field (0.11 and later; thinking is on by default for
+  models such as `qwen3` from 0.12.4), which the shared OpenAI-compatible parser
+  ignored. `Chat` and `ChatStream` now read that field as thinking when
+  `reasoning_content` is empty; non-string `reasoning` values are ignored
+  instead of failing the response. The parser is shared, so other
+  OpenAI-compatible servers that send a string `reasoning` (not tested here)
+  also yield thinking. Within one stream chunk, thinking is now published before
+  text, matching the final response. Thinking blocks count toward the agent's
+  token estimate, so compression can start earlier; they are not sent back to
+  the server.
+- `model.WithSeed` now reaches Ollama as `seed` on `Chat` and `ChatStream`
+  (#8); it was the only OpenAI-compatible adapter that dropped it.
 
 ## [v2.0.11] - 2026-09-19
 
