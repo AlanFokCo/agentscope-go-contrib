@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental fixed-deployment `managedtask` text execution and opt-in
+  `model.OpenAITextClient`: host authorization/projection, qualification, trusted
+  context bounds, finite admission/deadlines/retries and attempt/cost uncertainty.
+  Includes an [offline example](examples/managed_task/) and [guide](docs/managed-task.md).
+  Ordinary Chat/Agent behavior is unchanged; routing remains a later stage.
+
 - Experimental `classifier/jev` adapter with single-attempt TypeSafe HTTP
   conversion, bounded payloads, context cancellation, preserved attempt usage
   and opt-in live protocol tests. See the [Jev guide](docs/jev.md).
