@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload coverage profiles
         if: always() && matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-ubuntu-go1.25
           path: |
