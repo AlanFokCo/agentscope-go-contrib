@@ -13,6 +13,23 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- `model.OllamaNativeChatModel` talks to a local Ollama instance through the
+  native `/api/chat` endpoint instead of the OpenAI-compatible one (#28, first
+  stage). It is opt-in and additive: `OllamaChatModel` is unchanged. The native
+  transport can set per-request options the compatible endpoint cannot —
+  `OllamaNativeConfig.NumCtx` is sent as `options.num_ctx` on every request and
+  reported through `ContextSizer` (zero means server default / unknown) — and
+  maps `WithThinking`/`WithThinkingDisabled` to the native `think` toggle and
+  `WithResponseFormat` to `format` (`"json"` or an embedded schema object).
+  Usage comes from the final stream frame's `prompt_eval_count`/`eval_count`;
+  base64 image blocks ride the native `images` field. Native tool calling is
+  not supported yet: passing `WithTools` returns an explicit error rather than
+  silently dropping the tools, and tool call/result blocks in history are not
+  replayed (there is no tool protocol to attach them to). Streaming uses a new
+  NDJSON transport (`internal/httpx.DoNDJSONRequest`); a stream that ends
+  without a `done` frame surfaces as `ChatResponse.Error` with the partial
+  content preserved.
+
 - Experimental fixed-deployment `managedtask` text execution and opt-in
   `model.OpenAITextClient`: host authorization/projection, qualification, trusted
   context bounds, finite admission/deadlines/retries and attempt/cost uncertainty.
