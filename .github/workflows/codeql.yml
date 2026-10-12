@@ -23,18 +23,10 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: go
-          build-mode: manual
+          build-mode: autobuild
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          # A restored build cache lets go build skip compilation, and the
-          # tracer then reports "no source code seen".
-          cache: false
-
-      - name: Build
-        run: |
-          go clean -cache
-          go build ./...
 
       - uses: github/codeql-action/analyze@v3
