@@ -27,6 +27,12 @@ jobs:
           go build ./...
           go build ./examples/...
 
+      - name: Module tidiness
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Vet
         run: go vet ./...
 
@@ -124,7 +130,9 @@ jobs:
           cache: true
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        # Pin the linter version: @latest makes CI behavior change on upstream release.
+        # v2.14.0 builds with Go 1.26 via automatic toolchain switching.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 
       - name: Run golangci-lint
         run: golangci-lint run ./...
