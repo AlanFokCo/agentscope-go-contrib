@@ -23,14 +23,8 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: go
-          build-mode: manual
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        run: go build ./...
+          # Go extraction does not need a traced build; none avoids
+          # "no source code seen" when the Go build cache is warm.
+          build-mode: none
 
       - uses: github/codeql-action/analyze@v3
