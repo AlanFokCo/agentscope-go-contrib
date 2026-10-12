@@ -21,6 +21,7 @@ feature is wired into every execution path.
 | Context and recovery | [compress.go](pkg/agentscope/agent/compress.go), [checkpoint.go](pkg/agentscope/agent/checkpoint.go) | Context compression, summaries and checkpoint loading |
 | Loop integration | [loop_bridge.go](pkg/agentscope/agent/loop_bridge.go), [loop/](pkg/agentscope/loop/), [runtime/](pkg/agentscope/runtime/) | Agent-to-loop adapters and session execution |
 | Model interface and providers | [model.go](pkg/agentscope/model/model.go), [model/](pkg/agentscope/model/) | Chat calls, responses, usage, provider configuration and model cards |
+| Managed task routing | [router.go](pkg/agentscope/managedtask/router.go), [router_classification.go](pkg/agentscope/managedtask/router_classification.go) | Task-owned qualified pools, guarded classification and shared execution limits; [guide](docs/managed-routing.md) |
 | Fixed managed text tasks | [managedtask/](pkg/agentscope/managedtask/), [openai_text.go](pkg/agentscope/model/openai_text.go) | Opt-in fixed deployment, host disclosure policy, bounded admission/retries and frozen attempt snapshots; [guide](docs/managed-task.md) |
 | Probabilistic classification | [classifier/](pkg/agentscope/classifier/) | Typed decisions, validation, attempt accounting and offline fake; [guide](docs/classifier.md) |
 | Jev adapter | [classifier/jev/](pkg/agentscope/classifier/jev/) | Single-attempt Jev HTTP conversion, bounded payloads and failure accounting; [guide](docs/jev.md) |
@@ -172,6 +173,13 @@ a trustworthy bound over final JSON plus output reservation, and dispatch-time
 authorization. Its worker owns task/admission capacity through local cleanup;
 returned terminal snapshots cannot be updated by late work. It does not govern
 ordinary Chat/Agent paths or depend on the proposed shared-inference package.
+
+The optional `managedtask.Router` registers fixed deployments and qualified pools.
+Trusted metadata precedes local rules and guarded Choice classification; explicit
+defaults/fallbacks retain shared task limits, admission and attempt accounting.
+Jev/Fake implement `classifier.DispatchClassifier` for dispatch-time policy and
+accounting. See [routing contracts](docs/managed-routing.md). Routes never mutate
+a shared Agent; ordinary Agent/Chat paths remain outside this boundary.
 
 ### Context and model capabilities
 

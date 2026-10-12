@@ -37,4 +37,5 @@ jobs:
         run: |
           go run ./examples/classifier
           go run ./examples/managed_task
+          go run ./examples/managed_routing
           go run ./examples/ask_user </dev/null

@@ -91,9 +91,16 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
   tool-disabled boundary with host disclosure/qualification, trustworthy context
   bounds, finite local admission/retries and frozen terminal accounting. Unknown
   usage/cost stays explicit and strict budgets are rejected. It does not cover
-  ordinary Agent/helper paths, distributed quotas or routing. Local fixtures are
+  ordinary Agent/helper paths or distributed quotas. Local fixtures are
   not production quality evidence; cleanup can outlive cancellation. See the
   [managed task guide](docs/managed-task.md).
+
+- Experimental `managedtask.Router` adds task-owned weighted pools, optional guarded
+  Choice classification, explicit defaults/fallbacks and shared task admission,
+  deadlines, attempt limits and accounting. Qualification/disclosure/context checks
+  apply to each candidate; no strict monetary budget or live quality/savings claim
+  is supplied. `classifier.DispatchClassifier` is opt-in; ordinary `Classify` is
+  compatible. See the [routing guide](docs/managed-routing.md).
 
 - **Streaming behavior change (#17):** without middleware, `ReplyStream` now
   uses provider `ChatStream` for normal rounds and forced finalization; `Reply`

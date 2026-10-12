@@ -141,3 +141,14 @@ adds bounded bodies and attempt accounting, and deliberately omits SDK retries
 and independent request timeouts to preserve the Go classifier contract. The
 shared `internal/httpx.DoJSONRequest` helper retries and reads unbounded response
 bodies, so it is not used on this single-attempt path. No new dependency is needed.
+
+## Managed routing
+
+`Client.Target()` returns the configured endpoint/model binding.
+`ClassifyWithDispatch(ctx, request, limits, begin)` supports the optional
+[managed router](managed-routing.md): positive `DispatchLimits` narrow adapter
+byte caps; zero retains them, negative values are rejected. The guard runs after
+preparation immediately before HTTP dispatch; a guard error prevents the request,
+preserves error identity and records zero attempts. Hosts authorize/project state
+and question data before this method and revalidate current policy in the guard.
+Ordinary `Classify` continues to perform one unguarded primitive attempt.
