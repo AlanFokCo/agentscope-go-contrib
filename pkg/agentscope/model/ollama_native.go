@@ -16,6 +16,10 @@ import (
 // /api/chat endpoint, allowing per-request options (num_ctx, think) the
 // OpenAI-compatible endpoint cannot set. No API key is required. Native tool
 // calling is not supported yet: passing tools via WithTools returns an error.
+// WithThinking/WithThinkingDisabled map to the native think boolean; the
+// budget argument has no native counterpart and is ignored. Reasoning the
+// server reports in message.thinking (Ollama 0.11+; on by default for models
+// such as qwen3 from 0.12.4) is surfaced as ThinkingBlock content.
 type OllamaNativeChatModel struct {
 	baseURL        string
 	model          string
@@ -103,8 +107,11 @@ func (m *OllamaNativeChatModel) Chat(ctx context.Context, msgs []*message.Msg, o
 	if resp.ModelName == "" {
 		resp.ModelName = m.model
 	}
+	if parsed.Message.Thinking != "" {
+		resp.Content = append(resp.Content, message.ThinkingBlock{Type: "thinking", Thinking: parsed.Message.Thinking})
+	}
 	if parsed.Message.Content != "" {
-		resp.Content = []message.ContentBlock{message.TextBlock{Type: "text", Text: parsed.Message.Content}}
+		resp.Content = append(resp.Content, message.TextBlock{Type: "text", Text: parsed.Message.Content})
 	}
 	return resp, nil
 }
@@ -216,12 +223,13 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 	defer close(outCh)
 
 	var (
-		accText    strings.Builder
-		modelName  string
-		usage      *ChatUsage
-		doneReason string
-		completed  bool
-		streamErr  error
+		accThinking strings.Builder
+		accText     strings.Builder
+		modelName   string
+		usage       *ChatUsage
+		doneReason  string
+		completed   bool
+		streamErr   error
 	)
 
 	for evt := range ndjsonCh {
@@ -248,13 +256,20 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 			modelName = frame.Model
 		}
 
+		// Thinking is published before text within a chunk, matching the block
+		// order of the final assembled response.
+		var deltaContent []message.ContentBlock
+		if frame.Message.Thinking != "" {
+			accThinking.WriteString(frame.Message.Thinking)
+			deltaContent = append(deltaContent, message.ThinkingBlock{Type: "thinking", Thinking: frame.Message.Thinking})
+		}
 		if frame.Message.Content != "" {
 			accText.WriteString(frame.Message.Content)
+			deltaContent = append(deltaContent, message.TextBlock{Type: "text", Text: frame.Message.Content})
+		}
+		if len(deltaContent) > 0 {
 			select {
-			case outCh <- ChatResponse{
-				Content:   []message.ContentBlock{message.TextBlock{Type: "text", Text: frame.Message.Content}},
-				ModelName: modelName,
-			}:
+			case outCh <- ChatResponse{Content: deltaContent, ModelName: modelName}:
 			case <-ctx.Done():
 				return
 			}
@@ -296,8 +311,11 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 		StopReason: mapOllamaNativeStopReason(doneReason),
 		Error:      streamErr,
 	}
+	if thinking := accThinking.String(); thinking != "" {
+		final.Content = append(final.Content, message.ThinkingBlock{Type: "thinking", Thinking: thinking})
+	}
 	if text := accText.String(); text != "" {
-		final.Content = []message.ContentBlock{message.TextBlock{Type: "text", Text: text}}
+		final.Content = append(final.Content, message.TextBlock{Type: "text", Text: text})
 	}
 	select {
 	case outCh <- final:
@@ -421,6 +439,9 @@ type ollamaNativeChatResponse struct {
 	Message   struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
+		// Thinking carries the model's reasoning (string per the native API;
+		// a server sending a non-string value fails decoding loudly).
+		Thinking string `json:"thinking"`
 	} `json:"message"`
 	Done            bool   `json:"done"`
 	DoneReason      string `json:"done_reason"`

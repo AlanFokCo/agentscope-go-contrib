@@ -508,6 +508,62 @@ func TestOllamaNative_Chat_UsageUnknown(t *testing.T) {
 	}
 }
 
+// TestOllamaNative_Chat_ThinkingOnly proves a response whose content is empty
+// but whose message.thinking is set (the default for thinking models such as
+// qwen3 since Ollama 0.12.4) surfaces the reasoning as a ThinkingBlock instead
+// of returning empty content without error.
+func TestOllamaNative_Chat_ThinkingOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"let me reason"},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":4}`)
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	resp, err := m.Chat(context.Background(), testMessages())
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(resp.Content) != 1 {
+		t.Fatalf("Content = %+v, want exactly one ThinkingBlock", resp.Content)
+	}
+	tb, ok := resp.Content[0].(message.ThinkingBlock)
+	if !ok {
+		t.Fatalf("Content[0] = %T, want message.ThinkingBlock", resp.Content[0])
+	}
+	if tb.Thinking != "let me reason" {
+		t.Errorf("Thinking = %q", tb.Thinking)
+	}
+	if resp.GetTextContent() != "" {
+		t.Errorf("text content should be empty, got %q", resp.GetTextContent())
+	}
+}
+
+// TestOllamaNative_Chat_ThinkingBeforeContent proves that when both are
+// present the ThinkingBlock precedes the TextBlock.
+func TestOllamaNative_Chat_ThinkingBeforeContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":"the answer","thinking":"let me reason"},"done":true,"done_reason":"stop"}`)
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	resp, err := m.Chat(context.Background(), testMessages())
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(resp.Content) != 2 {
+		t.Fatalf("Content = %+v, want [ThinkingBlock, TextBlock]", resp.Content)
+	}
+	if tb, ok := resp.Content[0].(message.ThinkingBlock); !ok || tb.Thinking != "let me reason" {
+		t.Errorf("Content[0] = %+v, want ThinkingBlock", resp.Content[0])
+	}
+	if tb, ok := resp.Content[1].(message.TextBlock); !ok || tb.Text != "the answer" {
+		t.Errorf("Content[1] = %+v, want TextBlock", resp.Content[1])
+	}
+}
+
 func TestOllamaNative_Chat_Non2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"model 'nope' not found"}`, http.StatusNotFound)
@@ -919,5 +975,70 @@ func TestOllamaNative_ChatStream_DrainsAfterDone(t *testing.T) {
 				runtime.NumGoroutine(), before)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestOllamaNative_ChatStream_ThinkingDeltas proves per-frame thinking deltas
+// are published (including thinking-only frames), precede text within the same
+// chunk, accumulate independently, and the final response assembles
+// ThinkingBlock before TextBlock.
+func TestOllamaNative_ChatStream_ThinkingDeltas(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"first "},"done":false}`+"\n")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":"","thinking":"second"},"done":false}`+"\n")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":"answer","thinking":"!"},"done":false}`+"\n")
+		fmt.Fprint(w, `{"model":"qwen3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":9,"eval_count":4}`+"\n")
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	ch, err := m.ChatStream(context.Background(), testMessages())
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	resps := collectNativeStream(t, ch)
+	if len(resps) != 4 {
+		t.Fatalf("got %d responses, want 3 deltas + final: %+v", len(resps), resps)
+	}
+
+	// Frame 1 and 2: thinking-only deltas are published, not withheld.
+	for i, want := range []string{"first ", "second"} {
+		if len(resps[i].Content) != 1 {
+			t.Fatalf("delta %d Content = %+v", i, resps[i].Content)
+		}
+		tb, ok := resps[i].Content[0].(message.ThinkingBlock)
+		if !ok || tb.Thinking != want {
+			t.Errorf("delta %d = %+v, want ThinkingBlock %q", i, resps[i].Content[0], want)
+		}
+	}
+
+	// Frame 3: thinking before text within the same chunk.
+	if len(resps[2].Content) != 2 {
+		t.Fatalf("delta 2 Content = %+v", resps[2].Content)
+	}
+	if tb, ok := resps[2].Content[0].(message.ThinkingBlock); !ok || tb.Thinking != "!" {
+		t.Errorf("delta 2 block 0 = %+v, want ThinkingBlock %q", resps[2].Content[0], "!")
+	}
+	if tb, ok := resps[2].Content[1].(message.TextBlock); !ok || tb.Text != "answer" {
+		t.Errorf("delta 2 block 1 = %+v, want TextBlock %q", resps[2].Content[1], "answer")
+	}
+
+	// Final: accumulated ThinkingBlock before TextBlock.
+	last := resps[3]
+	if !last.IsLast || last.Error != nil {
+		t.Fatalf("final = %+v", last)
+	}
+	if len(last.Content) != 2 {
+		t.Fatalf("final Content = %+v, want [ThinkingBlock, TextBlock]", last.Content)
+	}
+	if tb, ok := last.Content[0].(message.ThinkingBlock); !ok || tb.Thinking != "first second!" {
+		t.Errorf("final thinking = %+v, want accumulated %q", last.Content[0], "first second!")
+	}
+	if tb, ok := last.Content[1].(message.TextBlock); !ok || tb.Text != "answer" {
+		t.Errorf("final text = %+v, want %q", last.Content[1], "answer")
+	}
+	if last.Usage == nil || last.Usage.InputTokens != 9 || last.Usage.OutputTokens != 4 {
+		t.Errorf("usage = %+v, want input 9 / output 4", last.Usage)
 	}
 }

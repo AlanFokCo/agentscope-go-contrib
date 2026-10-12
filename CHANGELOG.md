@@ -19,8 +19,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   transport can set per-request options the compatible endpoint cannot —
   `OllamaNativeConfig.NumCtx` is sent as `options.num_ctx` on every request and
   reported through `ContextSizer` (zero means server default / unknown) — and
-  maps `WithThinking`/`WithThinkingDisabled` to the native `think` toggle and
+  maps `WithThinking`/`WithThinkingDisabled` to the native `think` toggle (the
+  thinking budget argument has no native counterpart and is ignored) and
   `WithResponseFormat` to `format` (`"json"` or an embedded schema object).
+  Reasoning the server reports in `message.thinking` surfaces as a
+  `ThinkingBlock` on both `Chat` and `ChatStream`, published before text
+  within a chunk and assembled before the `TextBlock` in the final response.
   Usage comes from the final stream frame's `prompt_eval_count`/`eval_count`;
   base64 image blocks ride the native `images` field. Native tool calling is
   not supported yet: passing `WithTools` returns an explicit error rather than
