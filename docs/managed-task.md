@@ -27,6 +27,10 @@ Construct `model.NewOpenAITextClient(model.OpenAIConfig{...})`, then pass it to
 a non-nil `*Result`, including on failure. Check `Status` and `Err` before using
 `Text`; text is populated only on `Succeeded`.
 
+A nil caller context returns `Rejected` with `ErrTask`, preserving `TaskID`,
+without invoking host callbacks, acquiring capacity or recording attempts.
+A nil executor returns `Rejected` with `ErrConfig`, including with a nil context.
+
 | Path | Supported by this entry point |
 |---|---|
 | OpenAI Chat Completions JSON, one user text | Yes, through the explicit `OpenAITextClient` primitive |

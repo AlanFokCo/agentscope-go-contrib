@@ -37,6 +37,47 @@ func fixtureExecutor(t *testing.T, handler http.HandlerFunc, change func(*Config
 	return e
 }
 
+func TestExecuteRejectsNilContext(t *testing.T) {
+	var calls, hooks atomic.Int32
+	e := fixtureExecutor(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		successFixture(w, r)
+	}, func(cfg *Config) {
+		limits := DefaultLimits()
+		limits.MaxTasks = 1
+		cfg.Limits = &limits
+		cfg.Authorize = func(context.Context, Task, Deployment) error {
+			hooks.Add(1)
+			return nil
+		}
+		cfg.Project = func(_ context.Context, task Task, _ Deployment) (string, error) {
+			hooks.Add(1)
+			return task.Text, nil
+		}
+		cfg.InputTokenBound = func(context.Context, Deployment, []byte) (int, error) {
+			hooks.Add(1)
+			return 100, nil
+		}
+	})
+	task := evalTask("nil-context")
+	r := e.Execute(nil, task) //nolint:staticcheck // exercise invalid caller input
+	if r.TaskID != task.ID || r.Status != Rejected || !errors.Is(r.Err, ErrTask) || r.Text != "" || len(r.Attempts) != 0 || r.Cost != (Cost{}) {
+		t.Fatalf("nil context: %+v", r)
+	}
+	if hooks.Load() != 0 || calls.Load() != 0 {
+		t.Fatal("nil context reached host hooks or provider")
+	}
+	var nilExecutor *Executor
+	r = nilExecutor.Execute(nil, task) //nolint:staticcheck // verify configuration error precedence
+	if r.Status != Rejected || !errors.Is(r.Err, ErrConfig) || r.TaskID != task.ID {
+		t.Fatalf("nil executor and context: %+v", r)
+	}
+	r = e.Execute(context.Background(), evalTask("valid-context"))
+	if r.Status != Succeeded || calls.Load() != 1 {
+		t.Fatalf("valid task after rejection: %+v", r)
+	}
+}
+
 func TestExecuteProjectionAndQualification(t *testing.T) {
 	var calls atomic.Int32
 	e := fixtureExecutor(t, func(w http.ResponseWriter, _ *http.Request) {

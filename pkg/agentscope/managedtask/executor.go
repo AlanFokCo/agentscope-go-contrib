@@ -76,12 +76,16 @@ func (e *Executor) deployment() Deployment {
 }
 
 // Execute observes one terminal outcome within the caller/TaskTimeout deadline.
+// A nil parent is rejected with ErrTask before callbacks, admission or dispatch.
 // A bounded worker retains task/permit ownership until local callbacks and Send
 // finish. Uncooperative host hooks can delay cleanup, but cannot release capacity
 // early, trigger later retries or mutate returned snapshots. No whole Agent runs.
 func (e *Executor) Execute(parent context.Context, task Task) *Result {
 	if e == nil {
 		return &Result{TaskID: task.ID, Status: Rejected, Err: ErrConfig}
+	}
+	if parent == nil {
+		return &Result{TaskID: task.ID, Status: Rejected, Err: ErrTask}
 	}
 	ctx, cancel := context.WithTimeout(parent, e.limits.TaskTimeout)
 	defer cancel()
