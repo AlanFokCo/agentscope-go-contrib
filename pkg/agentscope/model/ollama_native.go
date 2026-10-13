@@ -18,8 +18,8 @@ import (
 // calling is not supported yet: passing tools via WithTools returns an error.
 // WithThinking/WithThinkingDisabled map to the native think boolean; the
 // budget argument has no native counterpart and is ignored. Reasoning the
-// server reports in message.thinking (Ollama 0.11+; on by default for models
-// such as qwen3 from 0.12.4) is surfaced as ThinkingBlock content.
+// server reports in message.thinking (Ollama 0.9+) is surfaced as
+// ThinkingBlock content.
 type OllamaNativeChatModel struct {
 	baseURL        string
 	model          string
