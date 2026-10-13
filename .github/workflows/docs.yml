@@ -11,6 +11,10 @@ permissions: read-all
 jobs:
   # Some referenced sites (for example developers.openai.com) answer bots with
   # 403 and rate limiters with 429; accept both instead of flaking.
+  # 502/503 are transient availability, not broken links: github.com blob pages
+  # intermittently return 503 to CI runners (observed on a CHANGELOG.md
+  # permalink), and lychee's GitHub API fallback does not cover blob URLs in
+  # public repos, so a token alone does not prevent those flakes.
   links:
     runs-on: ubuntu-latest
     steps:
@@ -18,7 +22,7 @@ jobs:
 
       - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
-          args: --accept 200,403,429,502 --max-retries 3 './**/*.md'
+          args: --accept 200,403,429,502,503 --max-retries 3 './**/*.md'
           fail: true
 
   # Offline examples must keep running, not only compiling. Only examples that

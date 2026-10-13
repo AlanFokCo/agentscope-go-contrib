@@ -38,7 +38,8 @@ untrusted task text must not fill them or grant permissions.
 
 An unknown metadata/rule category or rule error goes directly to the explicit
 default policy; it does not ask Jev to override trusted information. Classifier
-failure, malformed answers/reports, mismatched version, low confidence,
+failure (including host authorization denial and capacity exhaustion during
+classification), malformed answers/reports, mismatched version, low confidence,
 insufficient information and conflicting decisions also require that default.
 Without `Default`, these cases return `Rejected` with `ErrRoute`. Cancellation
 and deadline errors always terminate; they never trigger a default call.
