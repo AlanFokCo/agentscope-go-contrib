@@ -129,6 +129,11 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   128000-token default even though one cloud call can fall back to a smaller
   local model. Behavior change: when both members report windows above 128000,
   the wrapper now resolves to the smaller of them instead of 128000.
+- A negative `agent.ContextConfig.ContextSize` is now treated like 0 and
+  resolves the window from the model. It previously bypassed that check: the
+  compression threshold and reserve became zero or negative, so every round
+  summarized the whole context, including in-flight tool calls, and cleared
+  it, and an empty context reported a non-positive threshold error.
 
 ## [v2.0.11] - 2026-09-19
 
