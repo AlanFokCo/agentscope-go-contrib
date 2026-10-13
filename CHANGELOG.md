@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental `managedtask.Router` with a deployment registry, category-qualified
+  weighted pools, optional guarded Jev/Choice classification, explicit defaults
+  and fallback within shared admission/deadline/attempt limits. Includes unified
+  failed-attempt accounting and an [offline routing example](examples/managed_routing/)
+  with [usage guide](docs/managed-routing.md). No live quality or savings claim.
+
 - `model.OllamaNativeChatModel` talks to a local Ollama instance through the
   native `/api/chat` endpoint instead of the OpenAI-compatible one (#28, first
   stage). It is opt-in and additive: `OllamaChatModel` is unchanged. The native
@@ -38,7 +44,7 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   `model.OpenAITextClient`: host authorization/projection, qualification, trusted
   context bounds, finite admission/deadlines/retries and attempt/cost uncertainty.
   Includes an [offline example](examples/managed_task/) and [guide](docs/managed-task.md).
-  Ordinary Chat/Agent behavior is unchanged; routing remains a later stage.
+  Ordinary Chat/Agent behavior is unchanged; the optional router reuses this boundary.
 
 - Experimental `classifier/jev` adapter with single-attempt TypeSafe HTTP
   conversion, bounded payloads, context cancellation, preserved attempt usage

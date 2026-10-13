@@ -113,6 +113,15 @@ func failed(s string) *ae.AgentError {
 // DNS/connection failures therefore retain an attempt with unknown usage.
 // No request/response bodies, credentials or raw transport errors are logged.
 func (cl *Client) Classify(ctx context.Context, r c.Request) (out *c.Response, err error) {
+	return cl.ClassifyWithDispatch(ctx, r, c.DispatchLimits{}, nil)
+}
+
+// Target returns the actual endpoint and configured requested version.
+func (cl *Client) Target() (endpoint, model string) { return cl.endpoint, cl.model }
+
+// ClassifyWithDispatch guards the HTTP dispatch after request construction.
+// A guard failure preserves its error identity and records no attempt.
+func (cl *Client) ClassifyWithDispatch(ctx context.Context, r c.Request, limits c.DispatchLimits, begin func(c.AttemptKind) error) (out *c.Response, err error) {
 	out = &c.Response{OperationID: r.OperationID}
 	if cl == nil || cl.endpoint == "" {
 		return out, invalidRequest("client must be constructed with New")
@@ -120,6 +129,17 @@ func (cl *Client) Classify(ctx context.Context, r c.Request) (out *c.Response, e
 	if ctx == nil {
 		return out, invalidRequest("context is required")
 	}
+	if limits.MaxRequestBytes < 0 || limits.MaxResponseBytes < 0 || limits.MaxResponseBytes == math.MaxInt64 {
+		return out, invalidRequest("invalid managed byte limits")
+	}
+	copyClient := *cl
+	if limits.MaxRequestBytes > 0 && limits.MaxRequestBytes < copyClient.requestLimit {
+		copyClient.requestLimit = limits.MaxRequestBytes
+	}
+	if limits.MaxResponseBytes > 0 && limits.MaxResponseBytes < copyClient.responseLimit {
+		copyClient.responseLimit = limits.MaxResponseBytes
+	}
+	cl = &copyClient
 	if e := ctx.Err(); e != nil {
 		return out, canceled(e, "before dispatch")
 	}
@@ -144,6 +164,11 @@ func (cl *Client) Classify(ctx context.Context, r c.Request) (out *c.Response, e
 		return out, canceled(e, "before dispatch")
 	}
 	start := time.Now()
+	if begin != nil {
+		if e := begin(c.PhysicalAttempt); e != nil {
+			return out, e
+		}
+	}
 	out.Attempts = []c.Attempt{{Kind: c.PhysicalAttempt, RequestedModel: cl.model}}
 	defer func() {
 		if e := ctx.Err(); e != nil {

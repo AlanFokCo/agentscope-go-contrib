@@ -6,8 +6,8 @@ This guide covers the classifier abstraction merged in [PR #22](https://github.c
 The [Jev adapter](jev.md) implements these contracts in a separate subpackage.
 [Fixed-deployment managed execution](managed-task.md) is a separate entry point
 from stage 3 of [issue #16](https://github.com/agentscope-ai/agentscope-go/issues/16).
-Classifier-driven routing remains a later stage; this package
-selects no generation models.
+The optional [managed router](managed-routing.md) consumes classifier results to
+select qualified deployments; this classifier package itself selects no models.
 
 Run the offline example from a repository checkout:
 
@@ -64,7 +64,7 @@ An implementation should:
 1. Check `ctx` and `ValidateRequest` before constructing or dispatching anything.
    Recheck cancellation at dispatch and pass the context to the transport.
 2. Make at most one outbound request. Do not enable retries or automatic redirect
-   following in a transport that could issue additional requests. Later executor
+   following in a transport that could issue additional requests. Managed executor
    policy can repeat primitive calls using the same `OperationID` and a separate
    finite physical-attempt budget; this package does not enforce task limits.
 3. Once dispatch begins, append one `PhysicalAttempt`, even if the transport,
@@ -90,7 +90,7 @@ An implementation should:
    attempt deadline classified as non-retryable cancellation.
 
 A successful purely local classifier may report zero attempts. One `Classify`
-call is one primitive evaluation for a logical operation; a later executor can
+call is one primitive evaluation for a logical operation; a managed executor can
 group retry calls by `OperationID`. Simulations and physical requests are distinct
 `Attempt.Kind` values, not interchangeable counts. Validation cannot verify an
 adapter's actual network activity; the provider adapter must test its dispatch
@@ -122,3 +122,13 @@ requires instructions, and keeps score legends in the original request instead
 of duplicating them in every answer. It adds explicit operation/attempt reporting
 and preserves unknown token counts with pointers. Jev-specific credentials,
 parameters and protocol limits are documented in the [Jev guide](jev.md).
+
+## Managed dispatch
+
+`classifier.DispatchClassifier` adds `Target` and `ClassifyWithDispatch` for the
+opt-in [managed router](managed-routing.md). Jev and Fake implement it. A managed
+call narrows byte limits through `DispatchLimits` and checks a dispatch guard
+after preparation, immediately before its single dispatch. Guard failure has no
+attempt and preserves its error identity. Ordinary `Classify` stays compatible
+and performs no managed authorization. Fake marks dispatch as simulated, checks
+its synthetic representation, and leaves `Started` open when a guard rejects.

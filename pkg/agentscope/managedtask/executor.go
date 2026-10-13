@@ -19,7 +19,7 @@ type Executor struct {
 	cfg       Config
 	limits    Limits
 	tasks     chan struct{}
-	admission admission
+	admission *admission
 }
 
 // New validates and snapshots configuration without calling host code or sending.
@@ -65,7 +65,7 @@ func New(cfg Config) (*Executor, error) { //nolint:gocritic // explicit public c
 		}
 		cfg.Prices = &p
 	}
-	return &Executor{cfg: cfg, limits: limits, tasks: make(chan struct{}, limits.MaxTasks), admission: admission{maxActive: limits.MaxConcurrent, maxQueued: limits.MaxQueued}}, nil
+	return &Executor{cfg: cfg, limits: limits, tasks: make(chan struct{}, limits.MaxTasks), admission: &admission{maxActive: limits.MaxConcurrent, maxQueued: limits.MaxQueued}}, nil
 }
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
@@ -105,7 +105,11 @@ func (e *Executor) Execute(parent context.Context, task Task) *Result {
 		return state.finish(Rejected, "", ErrCapacity)
 	}
 	done := make(chan struct{})
-	go func() { defer func() { <-e.tasks; close(done) }(); e.run(ctx, task, state) }()
+	go func() {
+		defer func() { <-e.tasks; close(done) }()
+		status, text, err := e.run(ctx, task, state)
+		state.finish(status, text, err)
+	}()
 	select {
 	case <-done:
 		return state.snapshot()
@@ -153,38 +157,38 @@ func hostError(ctx context.Context, err, fallback error) error {
 	return fallback
 }
 
-func (e *Executor) run(ctx context.Context, task Task, state *execution) {
+func (e *Executor) run(ctx context.Context, task Task, state *execution) (Status, string, error) {
+	return e.runAttempts(ctx, task, state, e.limits.MaxAttempts)
+}
+
+func (e *Executor) runAttempts(ctx context.Context, task Task, state *execution, localLimit int) (Status, string, error) {
 	if err := e.authorize(ctx, task); err != nil {
-		state.finish(Rejected, "", err)
-		return
+		return Rejected, "", err
 	}
 	projected, err := e.cfg.Project(ctx, task, e.deployment())
 	if err != nil {
-		state.finish(Rejected, "", hostError(ctx, err, ErrProjection))
-		return
+		return Rejected, "", hostError(ctx, err, ErrProjection)
 	}
-	if err = ctx.Err(); err != nil {
-		state.finish(Canceled, "", err)
-		return
+	if err := ctx.Err(); err != nil {
+		return Canceled, "", err
 	}
 	prepared, err := e.cfg.Client.Prepare(ctx, projected, e.limits.MaxOutputTokens, e.limits.MaxRequestBytes)
 	if err != nil {
-		state.finish(Rejected, "", err)
-		return
+		return Rejected, "", err
 	}
 	bound, err := e.cfg.InputTokenBound(ctx, e.deployment(), prepared.JSON())
 	if err != nil {
-		state.finish(Rejected, "", hostError(ctx, err, ErrContext))
-		return
+		return Rejected, "", hostError(ctx, err, ErrContext)
 	}
 	if bound < 0 || e.limits.MaxOutputTokens > e.cfg.Deployment.ContextWindow || bound > e.cfg.Deployment.ContextWindow-e.limits.MaxOutputTokens {
-		state.finish(Rejected, "", ErrContext)
-		return
+		return Rejected, "", ErrContext
 	}
-	for attempt := 0; attempt < e.limits.MaxAttempts; attempt++ {
-		if err = ctx.Err(); err != nil {
-			state.finish(Canceled, "", err)
-			return
+	for attempt := 0; attempt < localLimit; attempt++ {
+		if !state.remaining(e.limits.MaxAttempts) {
+			return Rejected, "", ErrCapacity
+		}
+		if err := ctx.Err(); err != nil {
+			return Canceled, "", err
 		}
 		queueCtx, stopQueue := context.WithTimeout(ctx, e.limits.QueueTimeout)
 		err = e.admission.acquire(queueCtx)
@@ -195,20 +199,17 @@ func (e *Executor) run(ctx context.Context, task Task, state *execution) {
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				err = ErrQueueTimeout
 			}
-			state.finish(Rejected, "", err)
-			return
+			return Rejected, "", err
 		}
 		response, callErr := e.send(ctx, task, prepared, state)
 		e.admission.release()
 		if callErr == nil {
-			state.finish(Succeeded, response.Text, nil)
-			return
+			return Succeeded, response.Text, nil
 		}
 		if ctx.Err() != nil || errors.Is(callErr, context.Canceled) || errors.Is(callErr, context.DeadlineExceeded) {
-			state.finish(Canceled, "", hostError(ctx, callErr, callErr))
-			return
+			return Canceled, "", hostError(ctx, callErr, callErr)
 		}
-		if !ae.IsRetryable(callErr) || attempt+1 == e.limits.MaxAttempts {
+		if !ae.IsRetryable(callErr) || attempt+1 == localLimit {
 			status := Failed
 			switch {
 			case errors.Is(callErr, ErrDenied), errors.Is(callErr, ErrUnqualified):
@@ -222,8 +223,7 @@ func (e *Executor) run(ctx context.Context, task Task, state *execution) {
 					status = Filtered
 				}
 			}
-			state.finish(status, "", callErr)
-			return
+			return status, "", callErr
 		}
 		delay := e.limits.RetryBackoff
 		if retryAfter, ok := ae.RetryAfterOf(callErr); ok && retryAfter > delay {
@@ -234,10 +234,10 @@ func (e *Executor) run(ctx context.Context, task Task, state *execution) {
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			state.finish(Canceled, "", ctx.Err())
-			return
+			return Canceled, "", ctx.Err()
 		}
 	}
+	return Rejected, "", ErrCapacity
 }
 
 func (e *Executor) send(ctx context.Context, task Task, p *model.PreparedTextRequest, state *execution) (*model.TextCallResult, error) {
@@ -286,6 +286,7 @@ type execution struct {
 	terminal bool
 	ctx      context.Context
 	executor *Executor
+	cost     func([]Attempt) Cost
 }
 
 func (s *execution) finish(status Status, text string, err error) *Result {
@@ -331,7 +332,11 @@ func (s *execution) copyLocked() *Result {
 			r.Attempts[i].Usage = &copyUsage
 		}
 	}
-	r.Cost = s.executor.cost(r.Attempts)
+	if s.cost != nil {
+		r.Cost = s.cost(r.Attempts)
+	} else {
+		r.Cost = s.executor.cost(r.Attempts)
+	}
 	return &r
 }
 func copyCount(n *int64) *int64 {
@@ -340,4 +345,10 @@ func copyCount(n *int64) *int64 {
 	}
 	v := *n
 	return &v
+}
+
+func (s *execution) remaining(limit int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.terminal && s.ctx.Err() == nil && len(s.result.Attempts) < limit
 }

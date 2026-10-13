@@ -2,9 +2,11 @@
 
 Status: staged implementation of [RFC #11](https://github.com/agentscope-ai/agentscope-go/issues/11).
 The execution, retrieval and quality-measurement foundations described below are
-implemented in this change. Shared inference governance and routing are proposed
-subsequent changes. The separate [fixed managed text-task entry](../managed-task.md)
-implements the narrow stage 3 boundary of RFC #16 without changing these Agent paths. Availability on `main` does not imply a published release.
+implemented. Shared inference governance for these Agent paths remains proposed.
+The separate [fixed managed text-task entry](../managed-task.md) and
+[managed router](../managed-routing.md) implement the narrow stages 3–4 of RFC #16
+without changing these Agent paths. Source-checkout availability does not imply a
+published release.
 
 ## Objective and sequence
 
@@ -153,10 +155,11 @@ Upstream AgentScope was inspected through
 | [Tool media #2751](https://github.com/agentscope-ai/agentscope/pull/2751) | Cover actual Go adapter requests and corresponding token estimates |
 | [Tool metadata #2754](https://github.com/agentscope-ai/agentscope/pull/2754) | Preserve existing Go state/event metadata contracts; do not add Python-specific timestamps mechanically |
 | [Qdrant floats #2783](https://github.com/agentscope-ai/agentscope/pull/2783) | Typed conditions on Go's top-level payload, finite float equality as a closed range |
-| [Routing #2758](https://github.com/agentscope-ai/agentscope/pull/2758) | Proposed after managed execution/accounting; no Jev dependency in these foundations |
+| [Routing #2758](https://github.com/agentscope-ai/agentscope/pull/2758) | Separate managed task router is implemented; no Jev dependency in these Agent foundations |
 
 Shared cache namespaces/versioned keys must precede cross-tenant cache sharing or
 same-miss coalescing. The [generic classifier](../classifier.md) and
-[fixed managed text tasks](../managed-task.md) are separate implementations.
-Jev integration, routing, Excel/multimodal documents and complete realtime
-protocols remain separate work.
+[Jev adapter](../jev.md), [fixed managed text tasks](../managed-task.md) and
+[managed routing](../managed-routing.md) are separate implementations. Comparative
+evaluation, Excel/multimodal documents and complete realtime protocols remain
+separate work.

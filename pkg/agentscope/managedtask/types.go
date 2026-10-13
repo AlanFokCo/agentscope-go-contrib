@@ -1,6 +1,6 @@
-// Package managedtask provides experimental, opt-in execution of one fixed
-// text-only, non-streaming, tool-disabled deployment. It is independent of Agent
-// and classifier routing. Share an Executor to share single-process admission.
+// Package managedtask provides experimental, opt-in text-only, non-streaming,
+// tool-disabled execution through a fixed Executor or a classifier-backed Router.
+// It is independent of Agent. Share an instance for single-process admission.
 package managedtask
 
 import (
@@ -49,7 +49,8 @@ type Qualification struct {
 
 // Limits are finite per-executor and per-task caps. MaxTasks includes callbacks,
 // queues, retries and cleanup. MaxQueued may be zero; all other fields must be
-// positive. MaxAttempts counts actual transport dispatch starts, including errors.
+// positive. MaxAttempts counts dispatch starts, including errors; Router also
+// counts offline simulations conservatively, while excluding them from costs.
 type Limits struct {
 	MaxTasks, MaxQueued, MaxConcurrent, MaxAttempts    int
 	MaxRequestBytes, MaxResponseBytes, MaxOutputTokens int
@@ -106,12 +107,18 @@ const (
 // AttemptKind identifies an actual transport dispatch, including local fixtures.
 type AttemptKind string
 
-const PhysicalAttempt AttemptKind = "physical"
+const (
+	PhysicalAttempt AttemptKind = "physical"
+	// SimulatedAttempt is an offline classifier fixture, never a physical request.
+	SimulatedAttempt AttemptKind = "simulated"
+)
 
 // Attempt contains safe accounting metadata, never request/response bodies or
 // credentials. Completed=false means cleanup was still running at observation;
 // its usage/cost remains unknown. Returned records are frozen independent copies.
 type Attempt struct {
+	// OperationID is nonempty for classification; generation leaves it empty.
+	OperationID                                   string
 	Kind                                          AttemptKind
 	Number                                        int
 	DeploymentID, Endpoint, RequestedModel, Model string
@@ -133,7 +140,9 @@ type Cost struct {
 // omits raw host/provider errors. Cleanup may outlive Execute; late responses
 // cannot change this result. Cancellation does not establish remote compute stop.
 type Result struct {
-	TaskID   string
+	TaskID string
+	// Route contains host-configured identifiers only; no task text or answers.
+	Route    Route
 	Status   Status
 	Text     string
 	Attempts []Attempt

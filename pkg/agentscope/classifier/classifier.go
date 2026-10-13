@@ -31,6 +31,22 @@ type Classifier interface {
 	Classify(ctx context.Context, request Request) (*Response, error)
 }
 
+// DispatchLimits optionally narrows adapter byte caps; zero keeps the adapter cap.
+// Limits apply to complete encoded requests and decoded response bodies.
+type DispatchLimits struct{ MaxRequestBytes, MaxResponseBytes int64 }
+
+// DispatchClassifier is an opt-in managed primitive. Target binds the actual
+// endpoint and requested version. ClassifyWithDispatch invokes begin exactly once
+// immediately before its one dispatch (or simulation), after local preparation.
+// A begin error prevents dispatch and returns an empty report. Implementations
+// must not retry, bypass begin, or change its attempt kind. Hosts trust adapters
+// and transports to honor this contract. Ordinary Classify does not use a guard.
+type DispatchClassifier interface {
+	Classifier
+	Target() (endpoint, model string)
+	ClassifyWithDispatch(context.Context, Request, DispatchLimits, func(AttemptKind) error) (*Response, error)
+}
+
 // Request contains one logical classification operation. Repeated primitive
 // calls for the same operation reuse OperationID; retry policy belongs outside
 // this package. IDs correlate answers only: questions belong in Instructions.

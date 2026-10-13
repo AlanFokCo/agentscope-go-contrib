@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"slices"
@@ -54,6 +55,17 @@ func (f *Fake) Started() <-chan struct{} { return f.started }
 // Pre-dispatch failures have no attempts. Failure/cancellation after dispatch
 // retains one simulated attempt. It never retries or logs task data.
 func (f *Fake) Classify(ctx context.Context, r Request) (*Response, error) {
+	return f.ClassifyWithDispatch(ctx, r, DispatchLimits{}, nil)
+}
+
+// Target identifies the offline fixture; it is never an external destination.
+func (f *Fake) Target() (endpoint, model string) {
+	return "fake://classifier", f.config.Response.Model
+}
+
+// ClassifyWithDispatch guards the simulated dispatch. Guard failure preserves
+// its error identity, records no attempt and does not signal Started.
+func (f *Fake) ClassifyWithDispatch(ctx context.Context, r Request, limits DispatchLimits, begin func(AttemptKind) error) (*Response, error) {
 	out := &Response{OperationID: r.OperationID}
 	if f == nil || f.started == nil {
 		return out, invalidRequest("fake must be constructed with NewFake")
@@ -67,6 +79,13 @@ func (f *Fake) Classify(ctx context.Context, r Request) (*Response, error) {
 	if err := ValidateRequest(r); err != nil {
 		return out, err
 	}
+	if limits.MaxRequestBytes < 0 || limits.MaxResponseBytes < 0 {
+		return out, invalidRequest("invalid managed byte limits")
+	}
+	encoded, _ := json.Marshal(r)
+	if limits.MaxRequestBytes > 0 && int64(len(encoded)) > limits.MaxRequestBytes {
+		return out, invalidRequest("managed request exceeds byte limit")
+	}
 	start := time.Now()
 	preset := cloneResponse(f.config.Response)
 	preset.OperationID = r.OperationID
@@ -78,6 +97,11 @@ func (f *Fake) Classify(ctx context.Context, r Request) (*Response, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return &Response{OperationID: r.OperationID}, ae.Wrap(err, ae.CategoryModel, "classifier.canceled", "classification canceled before dispatch")
+	}
+	if begin != nil {
+		if err := begin(SimulatedAttempt); err != nil {
+			return &Response{OperationID: r.OperationID}, err
+		}
 	}
 	out.Attempts = []Attempt{attempt}
 	f.once.Do(func() { close(f.started) })
@@ -96,6 +120,12 @@ func (f *Fake) Classify(ctx context.Context, r Request) (*Response, error) {
 		}
 	}
 	out.Attempts[0].Duration = time.Since(start)
+	if err == nil {
+		encoded, _ := json.Marshal(out.Answers)
+		if limits.MaxResponseBytes > 0 && int64(len(encoded)) > limits.MaxResponseBytes {
+			err = invalidResponse("managed response exceeds byte limit")
+		}
+	}
 	if err == nil {
 		err = ValidateResponse(r, out)
 	} else if reportErr := ValidateReport(r, out); reportErr != nil {

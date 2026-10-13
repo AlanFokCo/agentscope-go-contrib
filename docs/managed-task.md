@@ -2,8 +2,10 @@
 
 The experimental `pkg/agentscope/managedtask` package implements stage 3 of
 [RFC #16](https://github.com/agentscope-ai/agentscope-go/issues/16). It executes
-one fixed deployment independently of `Agent` and the classifier. Jev selection,
-model pools, fallback, persisted routes and quality evaluation remain later stages.
+one fixed deployment independently of `Agent` and the classifier. The optional
+[managed router](managed-routing.md) adds classifier selection, model pools and
+fallback using this execution boundary. Persisted routes and quality evaluation
+remain outside the implemented stages.
 The [stage documentation checklist](https://github.com/agentscope-ai/agentscope-go/issues/16)
 tracks the agreed sequence. Availability in a source checkout does not imply a
 published release.
@@ -37,7 +39,7 @@ A nil executor returns `Rejected` with `ErrConfig`, including with a nil context
 | Compatible Chat Completions endpoints | Only where the host has verified this exact protocol, model identity, limits and quality; local fixtures alone do not qualify a live endpoint |
 | Responses, other provider adapters, custom `ChatModel`/fallback wrappers | No |
 | Streaming, tools, multimodal input/output, Agent rounds or helper calls | No |
-| Jev/classifier invocation and model selection | No; use the independent [classifier API](classifier.md) outside this stage |
+| Jev/classifier invocation and model selection | No in Executor; use the opt-in [Router](managed-routing.md) |
 
 Ordinary `Chat`, `ChatStream`, Agent and middleware behavior is unchanged. The
 new client reuses the existing OpenAI request representation, formatter and
