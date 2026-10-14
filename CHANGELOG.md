@@ -19,6 +19,13 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   Legacy checkpoint writes remain schema 1; opt-in recovery writes use schema 2.
   See the [reply recovery guide](docs/reply-recovery.md).
 
+- Experimental `evalkit.Runner.RunManagedLoad` evaluates fixed/rules/classifier
+  execution directly through managed task entry points, preserving all planned
+  outcomes, separate scoring, attempt kinds and incomplete costs. Includes a
+  [bilingual offline comparison and opt-in live pilot](examples/managed_routing_eval/)
+  with [evaluation guide](docs/managed-routing-evaluation.md). Fixtures do not
+  establish live quality, savings or production qualification.
+
 - Experimental `managedtask.Router` with a deployment registry, category-qualified
   weighted pools, optional guarded Jev/Choice classification, explicit defaults
   and fallback within shared admission/deadline/attempt limits. Includes unified

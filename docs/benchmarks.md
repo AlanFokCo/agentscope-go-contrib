@@ -193,6 +193,8 @@ observation times are separate. Reports are detached from late task/score writes
 observed execution second; it is absent for a zero-length interval. Always read
 it together with planned/offered/authorized/entered counts, failures and unfinished
 work. Current token/cost fields retain evalkit's existing accounting limitations:
-unknown usage and hidden attempts are not a complete ledger. Shared admission,
-physical-attempt accounting and comparative routing experiments remain subsequent
-work in the [managed inference design](design/managed-inference.md).
+unknown usage and hidden attempts are not a complete ledger. For the explicit managed Executor/Router path,
+[RunManagedLoad](managed-routing-evaluation.md) instead preserves managed attempt
+accounting and compares fixed, local-rule and classifier routing. Shared
+governance across other execution paths remains proposed in the
+[managed inference design](design/managed-inference.md).
