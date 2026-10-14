@@ -157,6 +157,7 @@ func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOver
 	a.mu.Lock()
 	prevSummary := a.state.Summary
 	prevLen := len(a.state.Context)
+	prevVersion := a.compactionVersion
 	a.mu.Unlock()
 
 	base := *a.contextCfg
@@ -185,7 +186,7 @@ func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOver
 
 	a.mu.Lock()
 	compressed := (a.state.Summary != prevSummary && a.state.Summary != "") ||
-		len(a.state.Context) != prevLen
+		len(a.state.Context) != prevLen || a.compactionVersion != prevVersion
 	a.mu.Unlock()
 	return compressed, err
 }
@@ -206,6 +207,9 @@ func (a *UnifiedAgent) compressContextForTool(ctx context.Context) (tool.Compres
 }
 
 func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConfig) error {
+	if a.contentBlockCompaction && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctxSize := cfg.ContextSize
 	if ctxSize == 0 {
 		// A failed model call is retried on ModelConfig.FallbackModel, so the
@@ -280,6 +284,9 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	// so the reply loop can account it (budgets, cost tracking, reply msg).
 	result, compUsage, err := model.GenerateStructuredOutputWithUsage(ctx, a.model, compressionMsgs, cfg.SummarySchema)
 	a.recordCompressionUsage(compUsage)
+	if a.contentBlockCompaction && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		if contextOverflow {
 			logrus.WithField("agent", a.name).Warn("compression context overflow, removing oldest messages and retrying")
@@ -287,14 +294,16 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 			result, retryUsage, err = a.retryCompressWithFewer(ctx, compressionMsgs, msgsToCompress, cfg, ctxSize, compressionToolSchema)
 			a.recordCompressionUsage(retryUsage)
 		}
+		if a.contentBlockCompaction && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			// Upstream #2140: a failed summary must not leave the context
 			// wedged above the threshold. Fall back to truncating to the
 			// reserve set while keeping the previous summary.
 			logrus.WithError(err).WithField("agent", a.name).
 				Warn("summary generation failed; falling back to truncation with previous summary")
-			a.fallbackTruncateKeepSummary(ctx, msgsToCompress, msgsToReserve)
-			return nil
+			return a.fallbackTruncateKeepSummary(ctx, msgsToCompress, msgsToReserve)
 		}
 	}
 
@@ -303,8 +312,7 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 		// Unusable summary: same fallback as a generation failure (#2140).
 		logrus.WithError(err).WithField("agent", a.name).
 			Warn("summary formatting failed; falling back to truncation with previous summary")
-		a.fallbackTruncateKeepSummary(ctx, msgsToCompress, msgsToReserve)
-		return nil
+		return a.fallbackTruncateKeepSummary(ctx, msgsToCompress, msgsToReserve)
 	}
 
 	// Offload the compressed context to workspace if offloader is set
@@ -321,8 +329,15 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	}
 
 	a.mu.Lock()
+	if a.contentBlockCompaction && ctx.Err() != nil {
+		a.mu.Unlock()
+		return ctx.Err()
+	}
 	a.state.Summary = newSummary
 	a.state.Context = msgsToReserve
+	if a.contentBlockCompaction {
+		a.compactionVersion++
+	}
 	a.mu.Unlock()
 
 	if a.readCache != nil {
@@ -344,7 +359,10 @@ const defaultTruncationNotice = "<system-info>Some earlier messages were truncat
 // above the compression threshold. The dropped messages are offloaded when
 // an offloader is configured (with a deduplicated reminder), and an empty
 // summary is replaced by a truncation notice.
-func (a *UnifiedAgent) fallbackTruncateKeepSummary(ctx context.Context, msgsToCompress, msgsToReserve []*message.Msg) {
+func (a *UnifiedAgent) fallbackTruncateKeepSummary(ctx context.Context, msgsToCompress, msgsToReserve []*message.Msg) error {
+	if a.contentBlockCompaction && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	a.mu.Lock()
 	summary := a.state.Summary
 	a.mu.Unlock()
@@ -373,12 +391,20 @@ func (a *UnifiedAgent) fallbackTruncateKeepSummary(ctx context.Context, msgsToCo
 	}
 
 	a.mu.Lock()
+	if a.contentBlockCompaction && ctx.Err() != nil {
+		a.mu.Unlock()
+		return ctx.Err()
+	}
 	a.state.Summary = summary
 	a.state.Context = msgsToReserve
+	if a.contentBlockCompaction {
+		a.compactionVersion++
+	}
 	a.mu.Unlock()
 	if a.readCache != nil {
 		cleanReadCacheForReserved(a.readCache, msgsToReserve)
 	}
+	return nil
 }
 
 func (a *UnifiedAgent) retryCompressWithFewer(
@@ -423,6 +449,9 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 	baseMsgs := []*message.Msg{message.SystemMsg(a.name, systemPrompt)}
 	if summary != "" {
 		baseMsgs = append(baseMsgs, message.UserMsg(a.name, "[Previous context summary]: "+summary))
+	}
+	if a.contentBlockCompaction {
+		return a.splitContentBlocksForCompression(ctxMsgs, baseMsgs, reserveTokenBudget, tools)
 	}
 
 	if reserveTokenBudget <= 0 {

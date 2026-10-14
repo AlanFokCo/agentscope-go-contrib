@@ -87,6 +87,13 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
 
 ## Unreleased execution and retrieval behavior
 
+- `agent.WithContentBlockCompaction` is Experimental despite its placement in
+  the Stable-tier `agent` package. With context compression configured, it opts
+  into retaining recent complete tool exchanges inside accumulated assistant
+  messages. Defaults, required interfaces and checkpoint schemas are unchanged;
+  oversized/no-prefix cases keep the wholesale emergency fallback. See the
+  [compaction policy and provider limits](docs/context-compaction.md).
+
 - `managedtask.Executor` is a separate fixed-deployment, plain-text, non-streaming,
   tool-disabled boundary with host disclosure/qualification, trustworthy context
   bounds, finite local admission/retries and frozen terminal accounting. Unknown
