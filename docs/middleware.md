@@ -204,7 +204,7 @@ Backends: `InMemoryStore` (substring search), `VectorMemoryStore` (cosine simila
 
 #### ReMeStore
 
-`ReMeStore` connects to a self-hosted [ReMe](https://github.com/modelscope/ReMe)
+`ReMeStore` connects to a self-hosted [ReMe](https://github.com/agentscope-ai/ReMe)
 service (tested against v0.4.1.13) and supports `Search` and `Add` only;
 `List` and `Delete` return `memory.ErrStoreUnsupported`.
 
@@ -227,7 +227,11 @@ Honest limitations, verified against the official Docker image:
   instance per user. The alternative, `ReMeConfig.FilterBySession`, sends a
   `session_id` filter — but it only works when the server runs with
   `include_frontmatter_in_metadata`; without that server flag the filter
-  silently matches nothing.
+  silently matches nothing. When the middleware is configured with a
+  non-empty `AgentID`, also enable `Config.ScopeSearchByAgent`: writes always
+  include the agent ID in the `session_id`, but searches include it only with
+  that option — otherwise the two sides compose different session IDs and
+  every search silently matches nothing.
 - **`Add` is an LLM distillation, not raw storage.** The server-side model
   summarizes the text into a note, so it must have tool-calling capability or
   nothing is persisted. A successful response with `created=false` (nothing

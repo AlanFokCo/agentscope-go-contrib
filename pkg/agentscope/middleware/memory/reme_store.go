@@ -31,7 +31,10 @@ type ReMeConfig struct {
 	// FilterBySession scopes search to memories written with the same
 	// session_id (userID, or userID:agentID). It requires the server to run
 	// with include_frontmatter_in_metadata; without that server flag the
-	// filter silently matches nothing.
+	// filter silently matches nothing. Note the middleware composes session
+	// IDs asymmetrically: Add always includes AgentID, Search only when
+	// middleware Config.ScopeSearchByAgent is set — with a non-empty
+	// AgentID, enable both or every search silently matches nothing.
 	FilterBySession bool
 }
 
