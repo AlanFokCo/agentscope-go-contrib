@@ -1273,11 +1273,13 @@ func (a *UnifiedAgent) executeStreamingTool(
 	var finalMeta map[string]any
 
 	for chunk := range streamCh {
+		// Last non-nil metadata wins, including payloads sent before the final
+		// chunk. This matches tool.CollectStream.
+		if chunk.Metadata != nil {
+			finalMeta = chunk.Metadata
+		}
 		if chunk.IsFinal {
 			finalState = chunk.State
-			if len(chunk.Metadata) > 0 {
-				finalMeta = chunk.Metadata
-			}
 			for _, b := range chunk.Content {
 				if tb, ok := b.(message.TextBlock); ok {
 					finalText += tb.Text
@@ -1554,6 +1556,8 @@ type toolBatch struct {
 	concurrent bool
 }
 
+// toolResult is one finished call in a concurrent batch. metadata is the tool
+// response metadata forwarded to both the end event and the persisted block.
 type toolResult struct {
 	index    int
 	state    message.ToolResultState

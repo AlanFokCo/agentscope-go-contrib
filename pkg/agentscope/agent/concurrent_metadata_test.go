@@ -129,3 +129,88 @@ func TestConcurrentBatchPreservesToolMetadata(t *testing.T) {
 	}
 	assertContextMetadata(t, a, "c1", "c2")
 }
+
+// streamingMetaTool emits its metadata on an intermediate chunk and none on
+// the final chunk. Execute itself returns no metadata, so a test that misses
+// the streaming path fails.
+type streamingMetaTool struct {
+	tool.BaseTool
+}
+
+func (t *streamingMetaTool) Execute(context.Context, map[string]any) (*tool.ToolResponse, error) {
+	return &tool.ToolResponse{
+		Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "ok"}},
+		State:   message.ToolResultSuccess,
+	}, nil
+}
+
+func (t *streamingMetaTool) ExecuteStream(context.Context, map[string]any) (<-chan tool.ToolChunk, error) {
+	ch := make(chan tool.ToolChunk, 3)
+	go func() {
+		defer close(ch)
+		ch <- tool.ToolChunk{
+			Content:  []message.ContentBlock{message.TextBlock{Type: "text", Text: "partial"}},
+			Metadata: map[string]any{"diff": "stale"},
+		}
+		ch <- tool.ToolChunk{
+			Content:  []message.ContentBlock{message.TextBlock{Type: "text", Text: "more"}},
+			Metadata: map[string]any{"diff": "--- a/file\n+++ b/file\n"},
+		}
+		ch <- tool.ToolChunk{
+			Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "ok"}},
+			IsFinal: true,
+			State:   message.ToolResultSuccess,
+		}
+	}()
+	return ch, nil
+}
+
+func newStreamingMetaTool() *streamingMetaTool {
+	mt := &streamingMetaTool{}
+	mt.ToolName = "streaming_meta_tool"
+	mt.ToolDescription = "streams metadata on a non-final chunk"
+	mt.ToolSchema = json.RawMessage(`{"type":"object"}`)
+	return mt
+}
+
+// TestStreamingToolPreservesLastNonNilMetadata pins the stream-folding
+// convention: metadata on a non-final chunk is kept, and a later non-nil
+// chunk replaces an earlier one. The final chunk carries no metadata.
+func TestStreamingToolPreservesLastNonNilMetadata(t *testing.T) {
+	const wantDiff = "--- a/file\n+++ b/file\n"
+	mock := &mockChatModel{
+		responses: []model.ChatResponse{
+			{Content: []message.ContentBlock{
+				message.ToolCallBlock{Type: "tool_call", ID: "c1", Name: "streaming_meta_tool", Input: `{}`, State: message.ToolCallPending},
+			}, IsLast: true},
+			{Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "done"}}, IsLast: true},
+		},
+	}
+	a := NewUnifiedAgent("test", "test", mock, WithToolkit(tool.NewToolkit(newStreamingMetaTool())))
+
+	ch, err := a.ReplyStream(context.Background(), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventMeta := collectToolResultMetadata(t, ch)
+	if diff, _ := eventMeta["c1"]["diff"].(string); diff != wantDiff {
+		t.Errorf("streaming path: tool_result_end kept %q, want last non-nil chunk", diff)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, m := range a.state.Context {
+		for _, b := range m.GetContentBlocks(message.ContentBlockToolResult) {
+			tr, ok := b.(message.ToolResultBlock)
+			if !ok || tr.ID != "c1" {
+				continue
+			}
+			diff, _ := tr.Metadata["diff"].(string)
+			if diff != wantDiff {
+				t.Errorf("streaming path: persisted metadata %q, want last non-nil chunk", diff)
+			}
+			return
+		}
+	}
+	t.Error("tool result c1 not found in context")
+}

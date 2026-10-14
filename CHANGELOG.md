@@ -199,12 +199,14 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 - Tool response `Metadata` (for example the Edit/Write unified diff or a custom
   tool's audit payload) is now preserved on the persisted `ToolResultBlock` and
   the `tool_result_end` event for normal, streaming and concurrent-batch tool
-  executions. Previously `emitToolResultWithExtra` and `executeStreamingTool`
-  emitted metadata on the event but dropped it from the returned `toolOutcome`,
-  so `executeAndRecord` and `executeConcurrentBatch` saved a result block with a
-  nil `Metadata` field; the concurrent path also failed to forward it to the
-  end event. Consumers that rebuild history from the event stream and the model
-  both now see the same metadata the sequential path already emitted.
+  executions. Streaming tools keep the last non-nil chunk metadata, matching
+  `tool.CollectStream`, so a payload sent before the final chunk is not dropped.
+  Previously `emitToolResultWithExtra` emitted metadata on the event but dropped
+  it from the returned `toolOutcome`, so `executeAndRecord` saved a result block
+  with a nil `Metadata` field. `executeStreamingTool` never set metadata on the
+  end event or the returned `toolOutcome`. The concurrent path also failed to
+  forward metadata to the end event. Consumers that rebuild history from the
+  event stream and the model both now see the same metadata.
 
 ## [v2.0.11] - 2026-09-19
 
