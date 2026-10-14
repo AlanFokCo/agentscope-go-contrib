@@ -224,7 +224,7 @@ to the same catalog.
 | Managed text tasks | [Fixed-deployment execution, limits and accounting](docs/managed-task.md) · [Routing and deployment pools](docs/managed-routing.md) |
 | Probabilistic classification | [Classifier API and attempt accounting](docs/classifier.md) · [Jev adapter](docs/jev.md) |
 | Middleware and memory | [Middleware](docs/middleware.md) |
-| Application deployment | [Deployment](docs/deployment.md) · [Execution and session limits](docs/adversarial-hardening.md) |
+| Application deployment | [Deployment](docs/deployment.md) · [Execution and session limits](docs/adversarial-hardening.md) · [Reply recovery](docs/reply-recovery.md) |
 | Runtime and evaluation | [Runtime features](docs/go-exclusive.md) · [Load and quality testing](docs/benchmarks.md) · [Replay and evaluation source](pkg/agentscope/replay/) |
 | Local models and devices | [Edge deployment](docs/edge-deployment.md) · [Device tools](docs/device-tools.md) · [Multi-device coordination](docs/multi-device.md) · [Offline operation](docs/offline-operation.md) |
 | Implementation and compatibility | [Source map](CLAUDE.md) · [API stability](STABILITY.md) · [Changelog](CHANGELOG.md) |

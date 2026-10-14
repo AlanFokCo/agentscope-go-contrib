@@ -159,6 +159,9 @@ a := agent.NewUnifiedAgent("bot", "...", cm,
 )
 ```
 
+With [reply recovery](reply-recovery.md) enabled, the counter is checkpointed
+and restored on resume instead of resetting to zero.
+
 ### TTSMiddleware
 
 Intercepts text output and synthesizes audio, injecting DataBlock events:
@@ -309,6 +312,9 @@ cb := middleware.NewReplyCostBudget(1.0, // USD per reply
     middleware.WithCostBudgetWarnRatio(0.8),
 )
 ```
+
+With [reply recovery](reply-recovery.md) enabled, the spent/warned state is
+checkpointed and restored on resume instead of resetting.
 
 ### RunJSONL
 

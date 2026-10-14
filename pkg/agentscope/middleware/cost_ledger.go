@@ -228,7 +228,7 @@ func NewReplyCostBudget(maxUSD float64, opts ...ReplyCostBudgetOption) *ReplyCos
 
 // OnReply resets per-reply cost state.
 func (m *ReplyCostBudgetMiddleware) OnReply(ctx context.Context, input ReplyInput, next ReplyHandler) <-chan event.Event {
-	if mc := GetMiddleContext(ctx); mc != nil {
+	if mc := GetMiddleContext(ctx); mc != nil && budgetState(ctx) == nil {
 		mc.Set(m.Key(), "spent", 0.0)
 		mc.Set(m.Key(), "warned", false)
 	}
@@ -242,7 +242,7 @@ func (m *ReplyCostBudgetMiddleware) OnModelCall(ctx context.Context, input *Mode
 	if mc == nil || m.maxUSD <= 0 {
 		return next(ctx, input)
 	}
-	spent := m.spent(mc)
+	spent := m.spentInContext(ctx, mc)
 	if spent >= m.maxUSD {
 		return nil, agenterrors.ErrBudgetExceeded
 	}
@@ -252,13 +252,7 @@ func (m *ReplyCostBudgetMiddleware) OnModelCall(ctx context.Context, input *Mode
 		return resp, err
 	}
 	if price, ok := m.priceFor(input.ModelName); ok {
-		spent += price.CostUSD(resp.Usage)
-		mc.Set(m.Key(), "spent", spent)
-		if spent >= m.maxUSD*m.warnRatio {
-			if w, _ := mc.Get(m.Key(), "warned"); w != true {
-				mc.Set(m.Key(), "warned", true)
-			}
-		}
+		m.recordInContext(ctx, mc, price.CostUSD(resp.Usage))
 	}
 	return resp, nil
 }
@@ -269,7 +263,7 @@ func (m *ReplyCostBudgetMiddleware) OnSystemPrompt(ctx context.Context, _ string
 	if mc == nil {
 		return currentPrompt
 	}
-	if w, ok := mc.Get(m.Key(), "warned"); ok && w == true {
+	if m.warnedInContext(ctx, mc) {
 		return currentPrompt + "\n\n" + m.hint
 	}
 	return currentPrompt
