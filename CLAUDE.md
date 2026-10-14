@@ -36,6 +36,7 @@ feature is wired into every execution path.
 | Composition and scheduling | [pipeline/](pkg/agentscope/pipeline/), [team/](pkg/agentscope/team/), [schedule/](pkg/agentscope/schedule/) | Agent coordination and scheduled execution |
 | Discovery and skills | [credential/](pkg/agentscope/credential/), [hub/](pkg/agentscope/hub/), [skill/](pkg/agentscope/skill/) | Provider configuration, integration discovery and skill loading |
 | Edge and device support | [device/](pkg/agentscope/device/), [messagebus/](pkg/agentscope/messagebus/), [connectivity.go](pkg/agentscope/model/connectivity.go) | Device tools, pub/sub and cloud/local routing |
+| Managed routing evaluation | [managed_load.go](pkg/agentscope/replay/evalkit/managed_load.go), [managed_summary.go](pkg/agentscope/replay/evalkit/managed_summary.go) | Direct Executor/Router load, independent scoring and whole-ledger cost per qualified completion; [guide](docs/managed-routing-evaluation.md) |
 | Observability and evaluation | [tracing/](pkg/agentscope/tracing/), [audit/](pkg/agentscope/audit/), [replay/](pkg/agentscope/replay/) | Traces, audit records, deterministic replay and evaluation |
 | Shared internal helpers | [internal/](pkg/agentscope/internal/) | HTTP transport, HTTP server hardening and atomic file replacement |
 | Runnable examples | [examples/](examples/) | Usage examples; inspect each example's configuration and service requirements |

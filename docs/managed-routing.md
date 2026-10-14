@@ -143,8 +143,9 @@ For a real Jev client, use `jev.New(jev.Config{APIKey: key, Model: pinnedVersion
 Endpoint: approvedEndpoint})` and bind `client.Target()` in `ClassificationTarget`.
 Keep keys in host credential handling. `Project` must return the exact approved
 Choice questions configured in `Decisions`. Live protocol tests and credentials
-are documented in the [Jev guide](jev.md#verification); stage 5 will add integrated
-live evaluation. No live provider is invoked by the offline example or default tests.
+are documented in the [Jev guide](jev.md#verification); the
+[evaluation workflow](managed-routing-evaluation.md) provides an explicit live
+Jev/generation pilot and offline three-group comparison. No live provider is invoked by the offline example or default tests.
 
 ## Shared limits, accounting and result ownership
 
@@ -199,8 +200,9 @@ go run ./examples/managed_routing
 Local fixtures test precedence, forbidden classification, typed decisions,
 shared admission/limits, fallback checks, concurrency, failed-attempt costs,
 cancellation and frozen results. They do not establish live compatibility,
-qualification, routing quality or savings. The stage 5 evaluation harness and
-fixed/rules/rules-plus-Jev comparisons remain future work. Admission remains
+qualification, routing quality or savings. The [stage 5 evaluation harness](managed-routing-evaluation.md) runs
+fixed/rules/rules-plus-classifier comparisons directly through this boundary.
+Live benefit and production qualification still require independent evidence. Admission remains
 single-process and instance-local; ordinary Agent, streaming and helper paths
 are outside this boundary. The governance contract aligns with
 [RFC #11](https://github.com/agentscope-ai/agentscope-go/issues/11), without a

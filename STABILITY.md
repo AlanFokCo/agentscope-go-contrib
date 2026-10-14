@@ -102,6 +102,12 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
   is supplied. `classifier.DispatchClassifier` is opt-in; ordinary `Classify` is
   compatible. See the [routing guide](docs/managed-routing.md).
 
+- Experimental `evalkit.Runner.RunManagedLoad` evaluates the managed entry point
+  directly with independent scoring and all-arrival/cost reporting. It creates no
+  qualification records; offline fixtures and opt-in live quality pilots are
+  distinct evidence. Late callbacks may outlive observation and incomplete costs
+  remain unknown. See the [evaluation guide](docs/managed-routing-evaluation.md).
+
 - **Streaming behavior change (#17):** without middleware, `ReplyStream` now
   uses provider `ChatStream` for normal rounds and forced finalization; `Reply`
   drains that path. Text/thinking deltas precede `ModelCallEnd`. Use
@@ -135,7 +141,7 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
 
 See [retrieval](docs/retrieval.md), [quality/load testing](docs/benchmarks.md) and
 [the delivery contracts](docs/design/managed-inference.md) for API and lifecycle
-limits. Managed admission and model routing remain proposed subsequent changes.
+limits. Shared governance across ordinary Agent/helper paths remains proposed.
 
 ## Unreleased reply recovery behavior
 

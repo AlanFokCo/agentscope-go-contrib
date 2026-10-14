@@ -35,6 +35,7 @@ see the [AskUser contract](tools.md#askuser).
 | [streaming](../examples/streaming/) | Agent lifecycle events |
 | [ask_user](../examples/ask_user/) | Structured questions with a simulated model and host answer |
 | [console](../examples/console/) | Terminal chat and tool-call confirmation |
+| [managed_routing_eval](../examples/managed_routing_eval/) | Three managed evaluation groups, bilingual fixtures and explicit live Jev configuration |
 | [managed_routing](../examples/managed_routing/) | Rules, simulated classification, explicit defaults and constrained fallback |
 | [managed_task](../examples/managed_task/) | Fixed-model managed text execution with a local HTTP fixture |
 | [classifier](../examples/classifier/) | Typed classification with offline fake results and attempt accounting |

@@ -130,6 +130,9 @@ type LoadReport struct {
 // owned by execution until the agent core and tool collectors return, then by a
 // scorer until it returns. Late workers cannot modify the returned report.
 func (r *Runner) RunLoad(execCtx, scoreCtx context.Context, manifest *WorkloadManifest, cfg *LoadConfig) (*LoadReport, error) {
+	if cfg == nil || cfg.NewModel == nil {
+		return nil, fmt.Errorf("evalkit: model factory is required")
+	}
 	m, tasks, err := validateWorkload(execCtx, scoreCtx, manifest, cfg)
 	if err != nil {
 		return nil, err
@@ -247,8 +250,8 @@ func validateWorkload(execCtx, scoreCtx context.Context, m *WorkloadManifest, cf
 	fail := func(detail string) (WorkloadManifest, map[string]TaskSpec, error) {
 		return WorkloadManifest{}, nil, fmt.Errorf("evalkit: %s", detail)
 	}
-	if execCtx == nil || scoreCtx == nil || m == nil || cfg == nil || cfg.NewModel == nil {
-		return fail("contexts, manifest and model factory are required")
+	if execCtx == nil || scoreCtx == nil || m == nil || cfg == nil {
+		return fail("contexts, manifest and load configuration are required")
 	}
 	if m.Version != 1 || m.RunID == "" || m.Scenario == "" || m.TaskSetVersion == "" || m.SourceRevision == "" {
 		return fail("version 1 and nonempty run/scenario/task-set/source identities are required")

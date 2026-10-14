@@ -163,6 +163,7 @@ necesarios.
 | [streaming](examples/streaming/) | Eventos del agente y deltas de texto del proveedor |
 | [ask_user](examples/ask_user/) | Preguntas estructuradas con un modelo y una respuesta del anfitrión simulados |
 | [console](examples/console/) | Chat en terminal y confirmación de herramientas |
+| [managed_routing_eval](examples/managed_routing_eval/) | Comparación de modelo fijo, reglas y clasificación; pruebas locales y piloto real opcional |
 | [managed_routing](examples/managed_routing/) | Pools, clasificación y alternativas con datos de prueba sin servicios externos |
 | [managed_task](examples/managed_task/) | Ejecución de texto con modelo fijo y servidor HTTP local de prueba |
 | [classifier](examples/classifier/) | Clasificación tipada con resultados simulados y registro de intentos |
@@ -230,6 +231,7 @@ enlaces al mismo catálogo.
 | Modelos y herramientas | [Proveedores](docs/model-providers.md) · [Herramientas](docs/tools.md) |
 | Middleware y memoria | [Middleware](docs/middleware.md) |
 | Despliegue de aplicaciones | [Despliegue](docs/deployment.md) · [Límites de ejecución y sesiones](docs/adversarial-hardening.md) |
+| Tareas de texto controladas | [Ejecución fija](docs/managed-task.md) · [Enrutamiento](docs/managed-routing.md) · [Evaluación](docs/managed-routing-evaluation.md) |
 | Runtime y evaluación | [Funciones del runtime](docs/go-exclusive.md) · [Pruebas de carga](docs/benchmarks.md) · [Código de replay y evaluación](pkg/agentscope/replay/) |
 | Modelos locales y dispositivos | [Despliegue edge](docs/edge-deployment.md) · [Herramientas de dispositivos](docs/device-tools.md) · [Coordinación entre dispositivos](docs/multi-device.md) · [Funcionamiento sin conexión](docs/offline-operation.md) |
 | Implementación y compatibilidad | [Mapa del código](CLAUDE.md) · [Estabilidad de API](STABILITY.md) · [Historial de cambios](CHANGELOG.md) |

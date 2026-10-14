@@ -4,7 +4,9 @@ Status: staged implementation of [RFC #11](https://github.com/agentscope-ai/agen
 The execution, retrieval and quality-measurement foundations described below are
 implemented. Shared inference governance for these Agent paths remains proposed.
 The separate [fixed managed text-task entry](../managed-task.md) and
-[managed router](../managed-routing.md) implement the narrow stages 3–4 of RFC #16
+[managed router](../managed-routing.md) and
+[direct managed evaluation](../managed-routing-evaluation.md) implement the narrow
+stages 3–5 of RFC #16
 without changing these Agent paths. Source-checkout availability does not imply a
 published release.
 
@@ -43,6 +45,7 @@ its executable examples, validation and behavior documentation.
 | Loop bridge | Calls `callModel` directly | Do not assume all model middleware runs through this entry |
 | Compression and structured output | Have helper-specific call paths | Account for helper work explicitly in a managed executor |
 | Direct `ChatStream` | Returns provider deltas and a final assembled response | Admission must cover the stream lifetime, not just setup |
+| `evalkit.Runner.RunManagedLoad` | Direct managed Executor/Router execution, independent scoring and attempt/cost snapshots | Evaluation only; creates no production qualification and incomplete costs remain unknown |
 | `evalkit.Runner.RunTask` / `RunLoad` | Validate terminal outcome and wait for core/tool collectors before workspace transfer | Uncooperative execution may delay cleanup; load reports freeze separately from worker termination |
 
 `Reply` checks cancellation after draining and again under the state lock before
@@ -160,6 +163,7 @@ Upstream AgentScope was inspected through
 Shared cache namespaces/versioned keys must precede cross-tenant cache sharing or
 same-miss coalescing. The [generic classifier](../classifier.md) and
 [Jev adapter](../jev.md), [fixed managed text tasks](../managed-task.md) and
-[managed routing](../managed-routing.md) are separate implementations. Comparative
-evaluation, Excel/multimodal documents and complete realtime protocols remain
+[managed routing](../managed-routing.md) and
+[managed comparative evaluation](../managed-routing-evaluation.md) are separate
+implementations. Excel/multimodal documents and complete realtime protocols remain
 separate work.
