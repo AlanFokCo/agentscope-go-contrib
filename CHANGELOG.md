@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Opt-in UnifiedAgent reply recovery (`agent.WithReplyRecovery`) with owned,
+  versioned built-in reply-budget counters, remaining-iteration tracking and
+  observable checkpoint failures via `SaveCheckpoint` and `ResumeReplyStream`.
+  Legacy checkpoint writes remain schema 1; opt-in recovery writes use schema 2.
+  See the [reply recovery guide](docs/reply-recovery.md).
+
 - Experimental `managedtask.Router` with a deployment registry, category-qualified
   weighted pools, optional guarded Jev/Choice classification, explicit defaults
   and fallback within shared admission/deadline/attempt limits. Includes unified

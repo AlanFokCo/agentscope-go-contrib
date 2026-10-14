@@ -137,6 +137,22 @@ See [retrieval](docs/retrieval.md), [quality/load testing](docs/benchmarks.md) a
 [the delivery contracts](docs/design/managed-inference.md) for API and lifecycle
 limits. Managed admission and model routing remain proposed subsequent changes.
 
+## Unreleased reply recovery behavior
+
+- `WithReplyRecovery` opts UnifiedAgent into typed built-in reply budgets,
+  explicit `ResumeReplyStream`, fail-stop persistence and exclusive reply state
+  until actual core completion. Middleware may invoke its reply handler at most
+  once; calls after its output closes are rejected. Pending tools retain their
+  unfinished iteration on resume and pass current validation. See the
+  [reply recovery guide](docs/reply-recovery.md).
+- Ordinary checkpoints keep schema 1; recovery checkpoints use schema 2 and
+  budget snapshot version 1. Older loaders reject schema 2. New loaders accept
+  older conversation state, but explicit recovery requires its typed snapshot.
+  Use a pre-recovery checkpoint or fresh conversation when rolling back; do not
+  remove counters to bypass resume validation. `SaveCheckpoint` returns errors;
+  legacy `Checkpoint` still logs them. Recovery does not provide exactly-once
+  tool execution or a reservation against concurrent physical spending.
+
 ## Error handling
 
 Errors are structured `*errors.AgentError` (category + code + retryable +
