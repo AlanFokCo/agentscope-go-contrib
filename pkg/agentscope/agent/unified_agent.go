@@ -1452,7 +1452,7 @@ func (a *UnifiedAgent) prepareModelInput(ctx context.Context) []*message.Msg {
 	}
 
 	sysMsg := message.SystemMsg(a.name, prompt)
-	msgs := make([]*message.Msg, 0, len(a.state.Context)+2)
+	msgs := make([]*message.Msg, 0, len(a.state.Context))
 	msgs = append(msgs, sysMsg)
 
 	if a.state.Summary != "" {
