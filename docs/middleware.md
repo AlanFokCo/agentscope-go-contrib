@@ -200,7 +200,42 @@ a := agent.NewUnifiedAgent("bot", "...", cm,
 )
 ```
 
-Backends: `InMemoryStore` (substring search), `VectorMemoryStore` (cosine similarity with embedding model), `Mem0Store` (mem0 REST API with LLM-based extraction).
+Backends: `InMemoryStore` (substring search), `VectorMemoryStore` (cosine similarity with embedding model), `Mem0Store` (mem0 REST API with LLM-based extraction), `ReMeStore` (ReMe HTTP service).
+
+#### ReMeStore
+
+`ReMeStore` connects to a self-hosted [ReMe](https://github.com/agentscope-ai/ReMe)
+service (tested against v0.4.1.13) and supports `Search` and `Add` only;
+`List` and `Delete` return `memory.ErrStoreUnsupported`.
+
+```go
+store, err := memory.NewReMeStore(memory.ReMeConfig{
+    BaseURL: "http://localhost:2333", // default
+})
+```
+
+Honest limitations, verified against the official Docker image:
+
+- **No authentication.** The service has no auth layer and binds loopback by
+  default; keep it on the same host as the agent or behind your own proxy.
+- **Writes index asynchronously.** A memory returned by `Add` is not
+  searchable immediately; in our tests indexing took about 30 seconds.
+- **`SearchOptions.Threshold` maps to `min_score`, ReMe's RRF fusion score**,
+  not a cosine similarity — tune it per deployment, it is not comparable to
+  `VectorMemoryStore` thresholds.
+- **User isolation needs a decision.** The default recommendation is one ReMe
+  instance per user. The alternative, `ReMeConfig.FilterBySession`, sends a
+  `session_id` filter — but it only works when the server runs with
+  `include_frontmatter_in_metadata`; without that server flag the filter
+  silently matches nothing. When the middleware is configured with a
+  non-empty `AgentID`, also enable `Config.ScopeSearchByAgent`: writes always
+  include the agent ID in the `session_id`, but searches include it only with
+  that option — otherwise the two sides compose different session IDs and
+  every search silently matches nothing.
+- **`Add` is an LLM distillation, not raw storage.** The server-side model
+  summarizes the text into a note, so it must have tool-calling capability or
+  nothing is persisted. A successful response with `created=false` (nothing
+  worth remembering) is normal and not an error.
 
 ### GuardrailMiddleware
 

@@ -13,6 +13,18 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- `memory.ReMeStore`: a `MemoryStore` backend talking to a self-hosted ReMe
+  HTTP service (#49). `Search` maps to `/search` (TopK→`limit`,
+  Threshold→`min_score`, optional `session_id` filter via
+  `ReMeConfig.FilterBySession`) and `Add` to `/auto_memory` with per-call
+  deadlines (30s search / 120s add defaults). ReMe answers business errors as
+  HTTP 200 with `success:false`, so the envelope is parsed on every call; a
+  successful add with `created=false` is normal (the server-side LLM declined
+  to persist) and not an error. `List`/`Delete` return the new
+  `memory.ErrStoreUnsupported` sentinel. See the
+  [middleware guide](docs/middleware.md#remestore) for the security and
+  indexing caveats.
+
 - Opt-in UnifiedAgent reply recovery (`agent.WithReplyRecovery`) with owned,
   versioned built-in reply-budget counters, remaining-iteration tracking and
   observable checkpoint failures via `SaveCheckpoint` and `ResumeReplyStream`.
