@@ -2,11 +2,17 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrStoreUnsupported marks MemoryStore operations a backend does not
+// implement. Returned wrapped, so errors.Is(err, ErrStoreUnsupported)
+// distinguishes an unsupported operation from a transport or server failure.
+var ErrStoreUnsupported = errors.New("memory: operation not supported by this store")
 
 // Memory represents a single stored memory entry.
 type Memory struct {

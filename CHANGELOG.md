@@ -19,6 +19,18 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   fragments and reply recovery, with the existing wholesale emergency fallback. Defaults and
   checkpoint schemas are unchanged. See the [compaction guide](docs/context-compaction.md).
 
+- `memory.ReMeStore`: a `MemoryStore` backend talking to a self-hosted ReMe
+  HTTP service (#49). `Search` maps to `/search` (TopK→`limit`,
+  Threshold→`min_score`, optional `session_id` filter via
+  `ReMeConfig.FilterBySession`) and `Add` to `/auto_memory` with per-call
+  deadlines (30s search / 120s add defaults). ReMe answers business errors as
+  HTTP 200 with `success:false`, so the envelope is parsed on every call; a
+  successful add with `created=false` is normal (the server-side LLM declined
+  to persist) and not an error. `List`/`Delete` return the new
+  `memory.ErrStoreUnsupported` sentinel. See the
+  [middleware guide](docs/middleware.md#remestore) for the security and
+  indexing caveats.
+
 - Opt-in UnifiedAgent reply recovery (`agent.WithReplyRecovery`) with owned,
   versioned built-in reply-budget counters, remaining-iteration tracking and
   observable checkpoint failures via `SaveCheckpoint` and `ResumeReplyStream`.
@@ -202,6 +214,17 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   member, and compression with such a `ModelConfig.FallbackModel`, can therefore
   resolve to a smaller or larger window. Calling the unwrapped model directly
   bypasses the circuit breaker and rate limiter.
+- Tool response `Metadata` (for example the Edit/Write unified diff or a custom
+  tool's audit payload) is now preserved on the persisted `ToolResultBlock` and
+  the `tool_result_end` event for normal, streaming and concurrent-batch tool
+  executions. Streaming tools keep the last non-nil chunk metadata, matching
+  `tool.CollectStream`, so a payload sent before the final chunk is not dropped.
+  Previously `emitToolResultWithExtra` emitted metadata on the event but dropped
+  it from the returned `toolOutcome`, so `executeAndRecord` saved a result block
+  with a nil `Metadata` field. `executeStreamingTool` never set metadata on the
+  end event or the returned `toolOutcome`. The concurrent path also failed to
+  forward metadata to the end event. Consumers that rebuild history from the
+  event stream and the model both now see the same metadata.
 
 ## [v2.0.11] - 2026-09-19
 

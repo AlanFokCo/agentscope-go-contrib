@@ -1283,8 +1283,14 @@ func (a *UnifiedAgent) executeStreamingTool(
 	var finalState message.ToolResultState
 	var finalText string
 	var finalExtra []message.ContentBlock
+	var finalMeta map[string]any
 
 	for chunk := range streamCh {
+		// Last non-nil metadata wins, including payloads sent before the final
+		// chunk. This matches tool.CollectStream.
+		if chunk.Metadata != nil {
+			finalMeta = chunk.Metadata
+		}
 		if chunk.IsFinal {
 			finalState = chunk.State
 			for _, b := range chunk.Content {
@@ -1308,8 +1314,12 @@ func (a *UnifiedAgent) executeStreamingTool(
 
 	finalText = a.truncateToolResult(ctx, finalText, tc.ID)
 	emitToolResultData(ctx, ch, replyID, tc.ID, finalExtra)
-	emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, finalState))
-	return toolOutcome{state: finalState, text: finalText, extra: finalExtra}
+	end := event.NewToolResultEndEvent(replyID, tc.ID, finalState)
+	if len(finalMeta) > 0 {
+		end.Metadata = finalMeta
+	}
+	emit(ctx, ch, end)
+	return toolOutcome{state: finalState, text: finalText, extra: finalExtra, metadata: finalMeta}
 }
 
 func (a *UnifiedAgent) truncateToolResult(ctx context.Context, outputText, toolCallID string) string {
@@ -1364,11 +1374,13 @@ func (a *UnifiedAgent) emitToolResultWithExtra(
 	}
 	emitToolResultData(ctx, ch, replyID, tc.ID, extra)
 	end := event.NewToolResultEndEvent(replyID, tc.ID, state)
+	var md map[string]any
 	if len(metadata) > 0 && len(metadata[0]) > 0 {
-		end.Metadata = metadata[0] // e.g. Edit/Write "diff" (M6b)
+		md = metadata[0]
+		end.Metadata = md // e.g. Edit/Write "diff" (M6b)
 	}
 	emit(ctx, ch, end)
-	return toolOutcome{state: state, text: text, extra: extra}
+	return toolOutcome{state: state, text: text, extra: extra, metadata: md}
 }
 
 // maxEventInlineDataBytes caps the base64 payload carried by a single
@@ -1557,11 +1569,14 @@ type toolBatch struct {
 	concurrent bool
 }
 
+// toolResult is one finished call in a concurrent batch. metadata is the tool
+// response metadata forwarded to both the end event and the persisted block.
 type toolResult struct {
-	index int
-	state message.ToolResultState
-	text  string
-	extra []message.ContentBlock
+	index    int
+	state    message.ToolResultState
+	text     string
+	extra    []message.ContentBlock
+	metadata map[string]any
 }
 
 // toolOutcome is the result of executing one tool call.
@@ -1728,7 +1743,7 @@ func (a *UnifiedAgent) executeConcurrentBatch(
 		go func(idx int, tc *message.ToolCallBlock) {
 			defer wg.Done()
 			outcome := a.executeToolCallWithPermission(ctx, nil, replyID, tc, actingHandler)
-			results[idx] = toolResult{index: idx, state: outcome.state, text: outcome.text, extra: outcome.extra}
+			results[idx] = toolResult{index: idx, state: outcome.state, text: outcome.text, extra: outcome.extra, metadata: outcome.metadata}
 		}(i, &tc)
 	}
 	wg.Wait()
@@ -1746,14 +1761,19 @@ func (a *UnifiedAgent) executeConcurrentBatch(
 			emit(ctx, ch, event.NewToolResultTextDeltaEvent(replyID, tc.ID, r.text))
 		}
 		emitToolResultData(ctx, ch, replyID, tc.ID, r.extra)
-		emit(ctx, ch, event.NewToolResultEndEvent(replyID, tc.ID, r.state))
+		end := event.NewToolResultEndEvent(replyID, tc.ID, r.state)
+		if len(r.metadata) > 0 {
+			end.Metadata = r.metadata
+		}
+		emit(ctx, ch, end)
 
 		resultBlock := message.ToolResultBlock{
-			Type:   "tool_result",
-			ID:     tc.ID,
-			Name:   tc.Name,
-			Output: toolResultOutput(r.text, r.extra),
-			State:  r.state,
+			Type:     "tool_result",
+			ID:       tc.ID,
+			Name:     tc.Name,
+			Output:   toolResultOutput(r.text, r.extra),
+			State:    r.state,
+			Metadata: r.metadata,
 		}
 		a.saveToContext([]message.ContentBlock{resultBlock}, nil)
 		a.updateToolCallState(tc.ID, message.ToolCallFinished)

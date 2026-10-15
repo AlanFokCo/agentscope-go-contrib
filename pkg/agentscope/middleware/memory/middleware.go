@@ -53,7 +53,7 @@ type Config struct {
 
 	Mode                Mode   // default: ModeBoth
 	TopK                int    // default: 5
-	ScopeSearchByAgent  bool   // filter search results by AgentID (default: true)
+	ScopeSearchByAgent  bool   // filter search results by AgentID (default: false)
 	MemorySectionHeader string // default: DefaultMemorySectionHeader
 	MemorySectionIntro  string // default: DefaultMemorySectionIntro
 	ToolInstructions    string // default: DefaultToolInstructions
