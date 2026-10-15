@@ -116,6 +116,13 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Fixed
 
+- App session cancellation now signals active ordinary and streaming chats as
+  well as registered background tasks (#48). Session admission stays exclusive
+  until accepted Agent cores finish after cancellation, including synchronous
+  tool cleanup; late middleware cannot start work after request cleanup. Parent
+  request cancellation and deadlines remain effective. Background cancellation
+  updates task state under a write lock and invokes cancel callbacks outside it.
+
 - Skill frontmatter parsing recognizes closing `---` only on an unindented
   delimiter line, preserving inline hyphens and YAML block-scalar content so
   added skills remain discoverable and removable.

@@ -13,6 +13,7 @@ import (
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/credential"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpsec"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/runctx"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/messagebus"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/middleware"
@@ -255,13 +256,14 @@ func (a *App) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !a.chatRegistry.TryAcquire(sessionID) {
+	ctx, finish, accepted := a.acquireChat(r.Context(), sessionID)
+	if !accepted {
 		http.Error(w, "chat already running for this session", http.StatusConflict)
 		return
 	}
-	defer a.chatRegistry.Release(sessionID)
+	defer finish()
 
-	resp, err := a.chatSvc.Chat(r.Context(), sessionID, req.Message)
+	resp, err := a.chatSvc.Chat(ctx, sessionID, req.Message)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -277,14 +279,15 @@ func (a *App) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !a.chatRegistry.TryAcquire(sessionID) {
+	ctx, finish, accepted := a.acquireChat(r.Context(), sessionID)
+	if !accepted {
 		http.Error(w, "chat already running for this session", http.StatusConflict)
 		return
 	}
 	// Defer so a panic mid-handler cannot wedge the session slot forever.
-	defer a.chatRegistry.Release(sessionID)
+	defer finish()
 
-	ch, err := a.chatSvc.ChatStream(r.Context(), sessionID, req.Message)
+	ch, err := a.chatSvc.ChatStream(ctx, sessionID, req.Message)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -304,8 +307,26 @@ func (a *App) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCancelChat(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionID")
+	a.chatRegistry.cancel(sessionID)
 	a.cancelDisp.Cancel(sessionID)
 	w.WriteHeader(http.StatusOK)
+}
+
+// acquireChat couples cancellation and exclusive ownership. Forwarded streams
+// may close before a canceled model/tool finishes, so release waits for cores.
+func (a *App) acquireChat(parent context.Context, sessionID string) (context.Context, func(), bool) {
+	ctx, cancel := context.WithCancel(parent)
+	run := a.chatRegistry.acquire(sessionID, cancel)
+	if run == nil {
+		cancel()
+		return nil, nil, false
+	}
+	ctx, scope := runctx.New(ctx)
+	return ctx, func() {
+		cancel()
+		scope.Close()
+		a.chatRegistry.release(sessionID, run)
+	}, true
 }
 
 func (a *App) handleConfirm(w http.ResponseWriter, r *http.Request) {
@@ -486,13 +507,17 @@ func NewCancelDispatcher(bgMgr *BackgroundTaskManager) *CancelDispatcher {
 
 // Cancel cancels all tasks for a given session.
 func (d *CancelDispatcher) Cancel(sessionID string) {
-	d.bgMgr.mu.RLock()
-	defer d.bgMgr.mu.RUnlock()
+	var cancels []context.CancelFunc
+	d.bgMgr.mu.Lock()
 	for _, t := range d.bgMgr.tasks {
 		if t.info.SessionID == sessionID && t.info.Status == "running" {
-			t.cancel()
+			cancels = append(cancels, t.cancel)
 			t.info.Status = "canceled"
 		}
+	}
+	d.bgMgr.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
 	}
 }
 
