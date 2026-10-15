@@ -205,6 +205,12 @@ compression failure handling and recorded usage, not only the successful summary
 path. Model capability data is not automatically enforced by every tool path;
 verify the wiring before documenting such a guarantee.
 
+Experimental `WithContentBlockCompaction` opts into the completed-exchange
+splitter in [compress_blocks.go](pkg/agentscope/agent/compress_blocks.go) at those
+same compression points. It preserves call/result intervals and owned message
+fragments; defaults and checkpoint schemas are unchanged. See the
+[retention policy and fixture limits](docs/context-compaction.md).
+
 ### Tools, permissions and workspace boundaries
 
 Tools implement `tool.Tool`, commonly by embedding `BaseTool`. The toolkit and

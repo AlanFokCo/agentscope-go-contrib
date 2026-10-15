@@ -222,6 +222,7 @@ to the same catalog.
 |---|---|
 | Setup and a first agent | [Getting started](docs/getting-started.md) |
 | Models and tools | [Providers](docs/model-providers.md) · [Tools](docs/tools.md) |
+| Context compaction | [Experimental tool-exchange retention](docs/context-compaction.md) |
 | Managed text tasks | [Fixed-deployment execution, limits and accounting](docs/managed-task.md) · [Routing and deployment pools](docs/managed-routing.md) · [Evaluation workflow](docs/managed-routing-evaluation.md) |
 | Probabilistic classification | [Classifier API and attempt accounting](docs/classifier.md) · [Jev adapter](docs/jev.md) |
 | Middleware and memory | [Middleware](docs/middleware.md) |

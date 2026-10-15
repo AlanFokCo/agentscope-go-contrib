@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental `agent.WithContentBlockCompaction` retains recent complete tool
+  exchanges inside an accumulated assistant message when they fit the estimated
+  reserve target. Keeps cross-message reasoning preludes, parallel pairs, owned
+  fragments and reply recovery, with the existing wholesale emergency fallback. Defaults and
+  checkpoint schemas are unchanged. See the [compaction guide](docs/context-compaction.md).
+
 - `memory.ReMeStore`: a `MemoryStore` backend talking to a self-hosted ReMe
   HTTP service (#49). `Search` maps to `/search` (TopK→`limit`,
   Threshold→`min_score`, optional `session_id` filter via

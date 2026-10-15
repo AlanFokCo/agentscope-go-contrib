@@ -48,6 +48,9 @@ type UnifiedAgent struct {
 	engine       *permission.Engine
 	skills       []skill.Skill
 
+	contentBlockCompaction bool
+	compactionVersion      uint64
+
 	confirmCh      chan event.UserConfirmResultEvent
 	externalCh     chan event.ExternalExecutionResultEvent
 	mu             sync.Mutex
@@ -191,6 +194,15 @@ func WithContextConfig(cfg *ContextConfig) AgentOption {
 			a.readCache = tool.NewReadCache(0, 0)
 		}
 	}
+}
+
+// WithContentBlockCompaction opts into experimental compaction of completed
+// tool exchanges inside this agent's assistant messages. Requires
+// WithContextConfig. Recent complete groups are retained when their estimated
+// size fits the reserve target; the existing wholesale emergency fallback
+// still applies when no useful split is possible.
+func WithContentBlockCompaction() AgentOption {
+	return func(a *UnifiedAgent) { a.contentBlockCompaction = true }
 }
 
 // WithReadCache sets a custom ReadCache for the agent.
@@ -725,12 +737,13 @@ reactLoop:
 			// signature or the middleware CompressHandler API.
 			a.mu.Lock()
 			prevSummary := a.state.Summary
+			prevCompaction := a.compactionVersion
 			a.mu.Unlock()
 			if err := a.compressContext(ctx); err != nil {
 				logrus.WithError(err).WithField("agent", a.name).Warn("context compression failed")
 			}
 			a.mu.Lock()
-			compacted := a.state.Summary != prevSummary && a.state.Summary != ""
+			compacted := (a.state.Summary != prevSummary && a.state.Summary != "") || a.compactionVersion != prevCompaction
 			a.mu.Unlock()
 			if compacted {
 				emit(ctx, ch, event.NewCustomEvent(replyID, "compacted", nil))
