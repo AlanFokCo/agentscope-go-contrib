@@ -24,12 +24,14 @@ type fakeConsoleAgent struct {
 	confirmGate chan struct{}
 	withRules   bool
 	text        string
+	// Lets tests force a confirmation to arrive before the publisher resumes.
+	afterConfirmPublish func()
 }
 
 func (f *fakeConsoleAgent) SubmitUserConfirm(result *event.UserConfirmResultEvent) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.confirms = append(f.confirms, result)
-	f.mu.Unlock()
 	if f.confirmGate != nil {
 		close(f.confirmGate)
 		f.confirmGate = nil
@@ -61,14 +63,26 @@ func (f *fakeConsoleAgent) ReplyStream(ctx context.Context, input string) (<-cha
 			if f.withRules {
 				tc.SuggestedRules = []any{permission.Rule{ToolName: "bash", RuleContent: "ls", Behavior: permission.BehaviorAllow, Source: "test"}}
 			}
-			if !send(event.NewRequireUserConfirmEvent(replyID, []message.ToolCallBlock{tc})) {
-				return
-			}
-			// Park until a confirmation arrives (or ctx cancels).
+			// Install the waiter before publishing: a consumer may answer as
+			// soon as it sees the event, before this goroutine runs again.
 			gate := make(chan struct{})
 			f.mu.Lock()
 			f.confirmGate = gate
 			f.mu.Unlock()
+			defer func() {
+				f.mu.Lock()
+				if f.confirmGate == gate {
+					f.confirmGate = nil
+				}
+				f.mu.Unlock()
+			}()
+			if !send(event.NewRequireUserConfirmEvent(replyID, []message.ToolCallBlock{tc})) {
+				return
+			}
+			if f.afterConfirmPublish != nil {
+				f.afterConfirmPublish()
+			}
+			// Park until a confirmation arrives (or ctx cancels).
 			select {
 			case <-gate:
 			case <-ctx.Done():
@@ -137,6 +151,74 @@ func TestLaunch_ConfirmYes(t *testing.T) {
 	}
 	if !strings.Contains(out, "done") {
 		t.Errorf("reply must continue after confirmation:\n%q", out)
+	}
+}
+
+func TestFakeConsoleAgentImmediateConfirmation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	submitted := make(chan struct{})
+	a := &fakeConsoleAgent{text: "confirmed"}
+	a.afterConfirmPublish = func() {
+		// Pause the publisher after the event is visible, until the consumer
+		// submits its answer. This forces the fast-consumer CI interleaving.
+		select {
+		case <-submitted:
+		case <-ctx.Done():
+		}
+	}
+	ch, err := a.ReplyStream(ctx, "hitl immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed, completed, text := false, false, ""
+	for evt := range ch {
+		switch e := evt.(type) {
+		case event.RequireUserConfirmEvent:
+			a.SubmitUserConfirm(&event.UserConfirmResultEvent{
+				ReplyID: e.ReplyID,
+				ConfirmResults: []event.ConfirmResult{{
+					Confirmed: true,
+					ToolCall:  e.ToolCalls[0],
+				}},
+			})
+			confirmed = true
+			close(submitted)
+		case event.TextBlockDeltaEvent:
+			text += e.Delta
+		case event.ReplyEndEvent:
+			completed = true
+		}
+	}
+	if !confirmed || !completed || text != "confirmed" {
+		t.Fatalf("immediate confirmation lost: confirmed=%t completed=%t text=%q context=%v", confirmed, completed, text, ctx.Err())
+	}
+}
+
+func TestFakeConsoleAgentCanceledConfirmation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	a := &fakeConsoleAgent{text: "must not continue", afterConfirmPublish: cancel}
+	ch, err := a.ReplyStream(ctx, "hitl canceled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := false
+	for evt := range ch {
+		if _, ok := evt.(event.RequireUserConfirmEvent); ok {
+			published = true
+		}
+		if _, ok := evt.(event.ReplyEndEvent); ok {
+			t.Fatal("canceled confirmation completed a reply")
+		}
+	}
+	if !published || ctx.Err() != context.Canceled {
+		t.Fatalf("confirmation did not reach explicit cancellation: published=%t context=%v", published, ctx.Err())
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.confirmGate != nil {
+		t.Fatal("canceled reply retained its confirmation gate")
 	}
 }
 
