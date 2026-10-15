@@ -177,6 +177,91 @@ func compactionMsg(blocks ...message.ContentBlock) *message.Msg {
 	return message.AssistantMsg("bot", blocks)
 }
 
+func crossMessageCompactionHistory(prelude ...message.ContentBlock) []*message.Msg {
+	return []*message.Msg{
+		compactionMsg(compactionCall("old", message.ToolCallFinished)),
+		message.NewMsg("tools", message.Role("tool"), []message.ContentBlock{compactionResult("old", message.ToolResultSuccess)}),
+		compactionMsg(prelude...),
+		compactionMsg(compactionCall("recent", message.ToolCallFinished)),
+		message.NewMsg("tools", message.Role("tool"), []message.ContentBlock{compactionResult("recent", message.ToolResultSuccess)}),
+	}
+}
+
+func TestContentBlockCompactionCrossMessagePrelude(t *testing.T) {
+	prelude := []message.ContentBlock{
+		message.ThinkingBlock{Type: "thinking", Thinking: "inspect recent", Extra: map[string]any{"signature": "fixture-signature"}},
+		message.RedactedThinkingBlock{Type: "redacted_thinking", Data: "opaque-reasoning"},
+		message.TextBlock{Type: "text", Text: "Inspect this observation."},
+		message.DataBlock{Type: "data", Source: message.URLSource{Type: "url", URL: "https://example.invalid/chart.png", MediaType: "image/png"}},
+	}
+	for _, budget := range []int{6, 7} {
+		t.Run(fmt.Sprintf("budget=%d", budget), func(t *testing.T) {
+			msgs := crossMessageCompactionHistory(prelude...)
+			before, err := json.Marshal(msgs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := NewUnifiedAgent("bot", "system", &blockCountModel{}, WithContentBlockCompaction(), WithState(&AgentState{Context: msgs}))
+			_, kept := a.splitContextForCompression(budget, nil)
+			if budget == 6 {
+				if len(kept) != 0 {
+					t.Fatal("retained an exchange without its indivisible reasoning/text/media prelude")
+				}
+				return
+			}
+			if !reflect.DeepEqual(kept, msgs[2:]) {
+				t.Fatalf("lost prelude order, signature or tool pair: %#v", kept)
+			}
+			after, err := json.Marshal(msgs)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("planning mutated the original cross-message history")
+			}
+		})
+	}
+}
+
+func TestContentBlockCompactionCrossMessagePendingPrelude(t *testing.T) {
+	thinking := message.ThinkingBlock{Type: "thinking", Thinking: "inspect recent", Extra: map[string]any{"signature": "fixture-signature"}}
+	redacted := message.RedactedThinkingBlock{Type: "redacted_thinking", Data: "opaque-reasoning"}
+	for _, state := range []message.ToolCallState{message.ToolCallPending, message.ToolCallAsking, message.ToolCallSubmitted} {
+		t.Run(string(state), func(t *testing.T) {
+			msgs := crossMessageCompactionHistory(thinking)[:3]
+			msgs = append(msgs, nil, compactionMsg(), compactionMsg(redacted), compactionMsg(compactionCall("pending", state)))
+			a := NewUnifiedAgent("bot", "system", &blockCountModel{}, WithContentBlockCompaction(), WithState(&AgentState{Context: msgs}))
+			prefix, kept := a.splitContextForCompression(2, nil)
+			if !reflect.DeepEqual(blockResultIDs(prefix), []string{"old"}) || !reflect.DeepEqual(kept, msgs[2:]) {
+				t.Fatal("unfinished call did not pin its complete cross-message prelude above the reserve target")
+			}
+		})
+	}
+}
+
+func TestContentBlockCompactionCrossMessagePreludeSeparators(t *testing.T) {
+	thinking := message.ThinkingBlock{Type: "thinking", Thinking: "prior turn", Extra: map[string]any{"signature": "prior-signature"}}
+	for _, separator := range []*message.Msg{message.UserMsg("user", "new task"), message.AssistantMsg("other", "handoff")} {
+		t.Run(string(separator.Role)+"/"+separator.Name, func(t *testing.T) {
+			msgs := crossMessageCompactionHistory(thinking)
+			msgs = append(msgs[:3], append([]*message.Msg{separator}, msgs[3:]...)...)
+			a := NewUnifiedAgent("bot", "system", &blockCountModel{}, WithContentBlockCompaction(), WithState(&AgentState{Context: msgs}))
+			_, kept := a.splitContextForCompression(3, nil)
+			if !reflect.DeepEqual(kept, msgs[4:]) {
+				t.Fatal("retained a prior turn's prelude across a role or agent-name separator")
+			}
+		})
+	}
+}
+
+func TestContentBlockCompactionCrossMessageParallelPrelude(t *testing.T) {
+	thinking := message.ThinkingBlock{Type: "thinking", Thinking: "inspect both", Extra: map[string]any{"signature": "fixture-signature"}}
+	msgs := crossMessageCompactionHistory(thinking)[:3]
+	msgs = append(msgs, compactionMsg(compactionCall("a", message.ToolCallFinished)), compactionMsg(compactionCall("b", message.ToolCallSubmitted)), compactionMsg(compactionResult("a", message.ToolResultSuccess)))
+	a := NewUnifiedAgent("bot", "system", &blockCountModel{}, WithContentBlockCompaction(), WithState(&AgentState{Context: msgs}))
+	prefix, kept := a.splitContextForCompression(2, nil)
+	if !reflect.DeepEqual(blockResultIDs(prefix), []string{"old"}) || !reflect.DeepEqual(kept, msgs[2:]) {
+		t.Fatal("one terminal result released an overlapping unfinished group's prelude")
+	}
+}
+
 func TestContentBlockCompactionBoundaries(t *testing.T) {
 	old := compactionExchange("old")
 	parallel := []message.ContentBlock{compactionCall("a", message.ToolCallFinished), compactionCall("b", message.ToolCallFinished), compactionResult("a", message.ToolResultSuccess), compactionResult("b", message.ToolResultSuccess)}

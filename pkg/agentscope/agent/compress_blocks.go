@@ -33,12 +33,19 @@ func (a *UnifiedAgent) splitContentBlocksForCompression(msgs, base []*message.Ms
 	var cuts []compressionBoundary
 	calls, results, allResults := make(map[string]int), make(map[string]int), make(map[string]int)
 	position := 0
+	preludeStart := -1
 	ambiguous := false
 	for mi, msg := range msgs {
 		cuts = append(cuts, compressionBoundary{msg: mi, position: position})
 		if msg == nil || len(msg.Content) == 0 {
 			position++
 			continue
+		}
+		ownAssistant := msg.Role == message.RoleAssistant && msg.Name == a.name
+		if !ownAssistant {
+			preludeStart = -1
+		} else if preludeStart < 0 {
+			preludeStart = position
 		}
 		for bi, block := range msg.Content {
 			switch b := block.(type) {
@@ -47,6 +54,12 @@ func (a *UnifiedAgent) splitContentBlocksForCompression(msgs, base []*message.Ms
 					ambiguous = true
 				}
 				calls[b.ID] = position
+				if ownAssistant {
+					// Adjacent assistant messages can hold one tool-use turn.
+					// Its leading reasoning (including signatures), text and media
+					// must travel with the call, even across message boundaries.
+					calls[b.ID] = preludeStart
+				}
 			case message.ToolResultBlock:
 				allResults[b.ID] = position
 				if terminalCompressionResult(b.State) {
@@ -54,8 +67,11 @@ func (a *UnifiedAgent) splitContentBlocksForCompression(msgs, base []*message.Ms
 						ambiguous = true
 					}
 					results[b.ID] = position
-					if bi+1 < len(msg.Content) && msg.Role == message.RoleAssistant && msg.Name == a.name {
-						cuts = append(cuts, compressionBoundary{msg: mi, block: bi + 1, position: position + 1})
+					if ownAssistant {
+						preludeStart = position + 1
+						if bi+1 < len(msg.Content) {
+							cuts = append(cuts, compressionBoundary{msg: mi, block: bi + 1, position: position + 1})
+						}
 					}
 				}
 			}

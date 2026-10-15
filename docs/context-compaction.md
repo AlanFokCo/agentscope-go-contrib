@@ -31,6 +31,13 @@ It selects the largest eligible recent suffix within the estimated reserve
 target, keeping the next exchange's preceding thinking, text and media intact.
 Individual content blocks and tool-result outputs are indivisible.
 
+This prelude can span adjacent assistant messages belonging to this agent,
+including imported or restored histories with signed or redacted thinking in a
+separate message before the tool call. A nonempty message with another role or
+agent name ends that association. Empty messages are treated conservatively and
+do not separate the prelude from its call. The complete prelude travels with the
+call/result group; if it cannot fit, the existing wholesale fallback applies.
+
 Call/result intervals are checked across the whole context. Interleaved calls
 such as `call-a, call-b, result-a, result-b` stay together, including when spread
 across messages. Success, error, denied and interrupted results are terminal;

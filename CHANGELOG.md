@@ -15,8 +15,8 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 - Experimental `agent.WithContentBlockCompaction` retains recent complete tool
   exchanges inside an accumulated assistant message when they fit the estimated
-  reserve target. Keeps cross-message/parallel pairs, owned fragments and reply
-  recovery, with the existing wholesale emergency fallback. Defaults and
+  reserve target. Keeps cross-message reasoning preludes, parallel pairs, owned
+  fragments and reply recovery, with the existing wholesale emergency fallback. Defaults and
   checkpoint schemas are unchanged. See the [compaction guide](docs/context-compaction.md).
 
 - Opt-in UnifiedAgent reply recovery (`agent.WithReplyRecovery`) with owned,

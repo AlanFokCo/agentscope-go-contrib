@@ -140,3 +140,93 @@ func TestContentBlockCompactionAdapterRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestContentBlockCompactionCrossMessageThinkingWire(t *testing.T) {
+	harness := providercontract.AnthropicHarness()
+	for _, streaming := range []bool{false, true} {
+		for _, budget := range []int{3, 4} {
+			t.Run(fmt.Sprintf("stream=%t/budget=%d", streaming, budget), func(t *testing.T) {
+				thinking := message.ThinkingBlock{Type: "thinking", Thinking: "inspect recent", Extra: map[string]any{"signature": "fixture-signature"}}
+				msgs := crossMessageCompactionHistory(thinking)
+				a := NewUnifiedAgent("bot", "system", &blockCountModel{}, WithContentBlockCompaction(), WithState(&AgentState{Context: msgs}),
+					WithContextConfig(&ContextConfig{ContextSize: 10, TriggerRatio: .1, ReserveRatio: float64(budget) / 10}))
+				if err := a.compressContext(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				captured := make(chan []byte, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var raw []byte
+					scenario := providercontract.ScnCaptureBody
+					if streaming {
+						scenario = providercontract.ScnCaptureBodyStream
+					}
+					harness.Serve(w, r, scenario, &raw)
+					captured <- raw
+				}))
+				defer server.Close()
+				adapter, err := harness.NewModel(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input := a.prepareModelInput(context.Background())
+				if streaming {
+					stream, callErr := adapter.ChatStream(context.Background(), input)
+					if callErr != nil {
+						t.Fatal(callErr)
+					}
+					for response := range stream {
+						if response.Error != nil {
+							t.Fatal(response.Error)
+						}
+					}
+				} else if _, err := adapter.Chat(context.Background(), input); err != nil {
+					t.Fatal(err)
+				}
+				var request struct {
+					Messages []struct {
+						Role    string `json:"role"`
+						Content []struct {
+							Type      string `json:"type"`
+							Thinking  string `json:"thinking"`
+							Signature string `json:"signature"`
+							ID        string `json:"id"`
+							ToolUseID string `json:"tool_use_id"`
+						} `json:"content"`
+					} `json:"messages"`
+				}
+				if err := json.Unmarshal(<-captured, &request); err != nil {
+					t.Fatal(err)
+				}
+				var got []string
+				for _, msg := range request.Messages {
+					for _, block := range msg.Content {
+						switch block.Type {
+						case "thinking":
+							if msg.Role != "assistant" || block.Thinking != thinking.Thinking || block.Signature != "fixture-signature" {
+								t.Fatal("cross-message signed thinking was modified")
+							}
+						case "tool_use":
+							if msg.Role != "assistant" || block.ID != "recent" {
+								t.Fatal("unexpected retained tool call")
+							}
+						case "tool_result":
+							if msg.Role != "user" || block.ToolUseID != "recent" {
+								t.Fatal("unexpected retained tool result or role")
+							}
+						default:
+							continue
+						}
+						got = append(got, block.Type)
+					}
+				}
+				var want []string
+				if budget == 4 {
+					want = []string{"thinking", "tool_use", "tool_result"}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("wire group=%v, want %v: keep complete signed turn or wholesale-fallback", got, want)
+				}
+			})
+		}
+	}
+}
