@@ -132,9 +132,10 @@ cm, _ := model.NewOllamaNativeChatModel(model.OllamaNativeConfig{
 Modelfile. The native adapter also maps `model.WithThinking` to the `think`
 toggle, supports native structured output via `model.WithResponseFormat`
 (`"json"` or an embedded schema object), and reports usage from the server's
-actual token counts. Tool calling is not supported yet: passing
-`model.WithTools` returns an explicit error — use `OllamaChatModel` when you
-need tools.
+actual token counts. Tool calling is supported: `model.WithTools` maps to the
+native `tools` field; `model.WithToolChoice` has no native counterpart, so its
+tool whitelist filters the sent tools while a non-default mode is ignored with
+a warning.
 
 ### Moonshot (Kimi)
 

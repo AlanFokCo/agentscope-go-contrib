@@ -302,11 +302,12 @@ func TestOllamaNative_MessageRoleMapping(t *testing.T) {
 	}
 }
 
-// TestOllamaNative_ToolBlocksNotReplayed proves history tool exchanges are not
-// replayed half-way: an assistant ToolCallBlock produces no tool_calls field,
-// an orphan ToolResultBlock produces no role "tool" message, and a message
-// holding only skipped blocks does not turn into an empty wire message.
-func TestOllamaNative_ToolBlocksNotReplayed(t *testing.T) {
+// TestOllamaNative_ToolHistoryReplay proves history tool exchanges replay
+// onto the wire: an assistant ToolCallBlock becomes an assistant tool_calls
+// message (Input sent back as a JSON object, ID/Name preserved), a matching
+// ToolResultBlock becomes a role "tool" message right after its call, and an
+// orphan ToolResultBlock (no matching call on the wire) is skipped.
+func TestOllamaNative_ToolHistoryReplay(t *testing.T) {
 	var captured []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = readBody(t, r)
@@ -327,6 +328,8 @@ func TestOllamaNative_ToolBlocksNotReplayed(t *testing.T) {
 			Name: "u",
 			Content: []message.ContentBlock{
 				message.ToolResultBlock{Type: "tool_result", ID: "call_1", Name: "search", Output: "found it"},
+				// Orphan: call_2 was never replayed (e.g. trimmed by compression).
+				message.ToolResultBlock{Type: "tool_result", ID: "call_2", Name: "search", Output: "orphan"},
 			},
 		},
 		message.UserMsg("u", "thanks"),
@@ -338,8 +341,8 @@ func TestOllamaNative_ToolBlocksNotReplayed(t *testing.T) {
 	}
 
 	raw := string(captured)
-	if strings.Contains(raw, "tool_calls") || strings.Contains(raw, `"role":"tool"`) || strings.Contains(raw, "found it") {
-		t.Errorf("tool protocol artifacts must not reach the wire: %s", raw)
+	if strings.Contains(raw, "orphan") {
+		t.Errorf("orphan tool result must not reach the wire: %s", raw)
 	}
 
 	var body struct {
@@ -348,9 +351,8 @@ func TestOllamaNative_ToolBlocksNotReplayed(t *testing.T) {
 	if err := json.Unmarshal(captured, &body); err != nil {
 		t.Fatal(err)
 	}
-	// The tool-result-only message collapses to nothing; what remains is
-	// user, assistant(text only), user.
-	wantRoles := []string{"user", "assistant", "user"}
+	// user, assistant text, assistant tool_calls, tool result, user.
+	wantRoles := []string{"user", "assistant", "assistant", "tool", "user"}
 	if len(body.Messages) != len(wantRoles) {
 		t.Fatalf("messages = %+v", body.Messages)
 	}
@@ -361,6 +363,62 @@ func TestOllamaNative_ToolBlocksNotReplayed(t *testing.T) {
 	}
 	if body.Messages[1].Content != "let me check" {
 		t.Errorf("assistant text = %q", body.Messages[1].Content)
+	}
+	calls := body.Messages[2].ToolCalls
+	if len(calls) != 1 {
+		t.Fatalf("tool_calls = %+v", body.Messages[2])
+	}
+	if calls[0].ID != "call_1" || calls[0].Function.Name != "search" {
+		t.Errorf("call = %+v", calls[0])
+	}
+	if string(calls[0].Function.Arguments) != `{"q":"weather"}` {
+		t.Errorf("arguments = %s, want JSON object", calls[0].Function.Arguments)
+	}
+	if body.Messages[3].Content != "found it" || body.Messages[3].Name != "search" {
+		t.Errorf("tool result = %+v", body.Messages[3])
+	}
+}
+
+// TestOllamaNative_CompressedHistoryReplay replays the shape a compression
+// cycle produces: an assistant message retaining its thinking prelude plus the
+// tool call, the matching tool result, and the follow-up answer. Thinking is
+// not replayed; the call/result pair must stay intact.
+func TestOllamaNative_CompressedHistoryReplay(t *testing.T) {
+	msgs := []*message.Msg{
+		message.UserMsg("u", "weather in Beijing?"),
+		message.AssistantMsg("a", []message.ContentBlock{
+			message.ThinkingBlock{Type: "thinking", Thinking: "should call the weather tool"},
+			message.ToolCallBlock{Type: "tool_call", ID: "call_x", Name: "get_weather", Input: `{"city":"Beijing"}`},
+		}),
+		{
+			ID:   "res",
+			Role: message.RoleUser,
+			Name: "u",
+			Content: []message.ContentBlock{
+				message.ToolResultBlock{Type: "tool_result", ID: "call_x", Name: "get_weather", Output: "sunny, 25C"},
+			},
+		},
+		message.AssistantMsg("a", "It is sunny, 25C."),
+	}
+
+	out := convertMessagesToOllamaNative(msgs)
+	wantRoles := []string{"user", "assistant", "tool", "assistant"}
+	if len(out) != len(wantRoles) {
+		t.Fatalf("messages = %+v", out)
+	}
+	for i, want := range wantRoles {
+		if out[i].Role != want {
+			t.Errorf("messages[%d].role = %q, want %q", i, out[i].Role, want)
+		}
+	}
+	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != "call_x" {
+		t.Errorf("tool call not replayed: %+v", out[1])
+	}
+	if string(out[1].ToolCalls[0].Function.Arguments) != `{"city":"Beijing"}` {
+		t.Errorf("arguments = %s", out[1].ToolCalls[0].Function.Arguments)
+	}
+	if out[2].Content != "sunny, 25C" || out[2].Name != "get_weather" {
+		t.Errorf("tool result = %+v", out[2])
 	}
 }
 
@@ -578,32 +636,105 @@ func TestOllamaNative_Chat_Non2xx(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Tools are rejected, not dropped
+// Native tool calling
 // ---------------------------------------------------------------------------
 
-func TestOllamaNative_ToolsRejected(t *testing.T) {
+func ollamaNativeToolSchemas() []ToolSchema {
+	return []ToolSchema{
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "get_weather",
+				Description: "Get current weather",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "get_time",
+				Description: "Get current time",
+				Parameters:  json.RawMessage(`{"type":"object"}`),
+			},
+		},
+	}
+}
+
+// TestOllamaNative_WireFormat_Tools asserts the full tools field shape
+// ({type:"function", function:{name, description, parameters}} with the schema
+// passed through as an object).
+func TestOllamaNative_WireFormat_Tools(t *testing.T) {
+	var captured []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("request must not reach the server when tools are set")
+		captured = readBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, ollamaNativeNonStreamJSON)
 	}))
 	defer srv.Close()
 
-	tools := []ToolSchema{{
-		Type: "function",
-		Function: ToolFunction{
-			Name:        "get_weather",
-			Description: "Get current weather",
-			Parameters:  json.RawMessage(`{"type":"object"}`),
-		},
-	}}
+	m := newNativeModel(t, srv, 0)
+	if _, err := m.Chat(context.Background(), testMessages(), WithTools(ollamaNativeToolSchemas())); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+
+	var body struct {
+		Tools []struct {
+			Type     string `json:"type"`
+			Function struct {
+				Name        string         `json:"name"`
+				Description string         `json:"description"`
+				Parameters  map[string]any `json:"parameters"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(captured, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Tools) != 2 {
+		t.Fatalf("tools = %s", captured)
+	}
+	first := body.Tools[0]
+	if first.Type != "function" || first.Function.Name != "get_weather" || first.Function.Description != "Get current weather" {
+		t.Errorf("tools[0] = %+v", first)
+	}
+	if first.Function.Parameters["type"] != "object" {
+		t.Errorf("parameters not passed through as object: %v", first.Function.Parameters)
+	}
+}
+
+// TestOllamaNative_WireFormat_ToolChoice proves tool_choice's whitelist
+// filters the sent tools and its mode never reaches the wire (the native
+// endpoint has no tool_choice field).
+func TestOllamaNative_WireFormat_ToolChoice(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = readBody(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, ollamaNativeNonStreamJSON)
+	}))
+	defer srv.Close()
 
 	m := newNativeModel(t, srv, 0)
-	_, err := m.Chat(context.Background(), testMessages(), WithTools(tools))
-	if err == nil || !strings.Contains(err.Error(), "tools") {
-		t.Fatalf("Chat with tools: expected explicit error, got %v", err)
+	err := func() error {
+		_, err := m.Chat(context.Background(), testMessages(),
+			WithTools(ollamaNativeToolSchemas()),
+			WithToolChoice(&ToolChoice{Mode: "required", Tools: []string{"get_weather"}}),
+		)
+		return err
+	}()
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
 	}
-	_, err = m.ChatStream(context.Background(), testMessages(), WithTools(tools))
-	if err == nil || !strings.Contains(err.Error(), "tools") {
-		t.Fatalf("ChatStream with tools: expected explicit error, got %v", err)
+
+	raw := string(captured)
+	if strings.Contains(raw, "tool_choice") {
+		t.Errorf("tool_choice must not reach the wire: %s", raw)
+	}
+	if strings.Contains(raw, "get_time") {
+		t.Errorf("whitelisted-out tool must not be sent: %s", raw)
+	}
+	if !strings.Contains(raw, "get_weather") {
+		t.Errorf("whitelisted tool missing: %s", raw)
 	}
 }
 
@@ -1040,5 +1171,171 @@ func TestOllamaNative_ChatStream_ThinkingDeltas(t *testing.T) {
 	}
 	if last.Usage == nil || last.Usage.InputTokens != 9 || last.Usage.OutputTokens != 4 {
 		t.Errorf("usage = %+v, want input 9 / output 4", last.Usage)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tool call responses
+// ---------------------------------------------------------------------------
+
+// Mirrors the shape captured from Ollama 0.40.3 + qwen3:0.6b (see
+// /tmp/ollama-samples/chat_tools.json): thinking plus a tool_calls array,
+// done_reason "stop" even though the model called a tool.
+const ollamaNativeToolCallJSON = `{"model":"qwen3:0.6b","created_at":"2026-10-15T02:06:17Z","message":{"role":"assistant","content":"","thinking":"I should call the weather function.","tool_calls":[{"id":"call_z8dlfrum","function":{"index":0,"name":"get_weather","arguments":{"city":"Beijing"}}}]},"done":true,"done_reason":"stop","total_duration":322844417,"prompt_eval_count":132,"eval_count":102}`
+
+func TestOllamaNative_Chat_ToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, ollamaNativeToolCallJSON)
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	resp, err := m.Chat(context.Background(), testMessages(), WithTools(ollamaNativeToolSchemas()))
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if resp.StopReason != StopReasonToolCalls {
+		t.Errorf("StopReason = %q, want %q (tool calls win over done_reason)", resp.StopReason, StopReasonToolCalls)
+	}
+	if len(resp.Content) != 2 {
+		t.Fatalf("Content = %+v, want [ThinkingBlock, ToolCallBlock]", resp.Content)
+	}
+	tb, ok := resp.Content[0].(message.ThinkingBlock)
+	if !ok || tb.Thinking != "I should call the weather function." {
+		t.Errorf("Content[0] = %+v", resp.Content[0])
+	}
+	tc, ok := resp.Content[1].(message.ToolCallBlock)
+	if !ok {
+		t.Fatalf("Content[1] = %T, want ToolCallBlock", resp.Content[1])
+	}
+	if tc.ID != "call_z8dlfrum" {
+		t.Errorf("server-provided ID not preserved: %q", tc.ID)
+	}
+	if tc.Name != "get_weather" {
+		t.Errorf("Name = %q", tc.Name)
+	}
+	if tc.Input != `{"city":"Beijing"}` {
+		t.Errorf("Input = %q, want arguments object as string", tc.Input)
+	}
+	if tc.State != message.ToolCallPending {
+		t.Errorf("State = %q, want pending", tc.State)
+	}
+	if resp.Usage == nil || resp.Usage.InputTokens != 132 || resp.Usage.OutputTokens != 102 {
+		t.Errorf("usage = %+v", resp.Usage)
+	}
+}
+
+// TestOllamaNative_Chat_ToolCallEmptyID proves a server that omits the call id
+// (older Ollama) still yields a non-empty client-generated ID — empty IDs are
+// ambiguous to the compression splitter (#54).
+func TestOllamaNative_Chat_ToolCallEmptyID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"m","message":{"role":"assistant","content":"","tool_calls":[{"function":{"index":0,"name":"get_time","arguments":{}}}]},"done":true,"done_reason":"stop"}`)
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	resp, err := m.Chat(context.Background(), testMessages(), WithTools(ollamaNativeToolSchemas()))
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(resp.Content) != 1 {
+		t.Fatalf("Content = %+v", resp.Content)
+	}
+	tc, ok := resp.Content[0].(message.ToolCallBlock)
+	if !ok {
+		t.Fatalf("Content[0] = %T", resp.Content[0])
+	}
+	if tc.ID == "" {
+		t.Error("empty server ID must fall back to a generated UUID")
+	}
+	if tc.Input != "{}" {
+		t.Errorf("Input = %q, want %q for empty arguments", tc.Input, "{}")
+	}
+}
+
+// Mirrors /tmp/ollama-samples/chat_tools_stream.ndjson: thinking deltas, one
+// frame carrying the complete tool_calls array, then a bare done frame.
+const ollamaNativeToolCallStreamNDJSON = `{"model":"qwen3:0.6b","message":{"role":"assistant","content":"","thinking":"think"},"done":false}
+{"model":"qwen3:0.6b","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_xn5joamh","function":{"index":0,"name":"get_weather","arguments":{"city":"Beijing"}}}]},"done":false}
+{"model":"qwen3:0.6b","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":131,"eval_count":116}
+`
+
+func TestOllamaNative_ChatStream_ToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprint(w, ollamaNativeToolCallStreamNDJSON)
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	ch, err := m.ChatStream(context.Background(), testMessages(), WithTools(ollamaNativeToolSchemas()))
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	resps := collectNativeStream(t, ch)
+	if len(resps) != 3 {
+		t.Fatalf("got %d responses, want thinking delta + tool_calls frame + final", len(resps))
+	}
+
+	if tb, ok := resps[0].Content[0].(message.ThinkingBlock); !ok || tb.Thinking != "think" {
+		t.Errorf("delta 0 = %+v", resps[0].Content[0])
+	}
+	tc, ok := resps[1].Content[0].(message.ToolCallBlock)
+	if !ok || tc.ID != "call_xn5joamh" || tc.Input != `{"city":"Beijing"}` {
+		t.Errorf("tool_calls frame = %+v", resps[1].Content[0])
+	}
+
+	last := resps[2]
+	if !last.IsLast || last.Error != nil {
+		t.Fatalf("final = %+v", last)
+	}
+	if last.StopReason != StopReasonToolCalls {
+		t.Errorf("StopReason = %q, want %q", last.StopReason, StopReasonToolCalls)
+	}
+	// Final assembly: ThinkingBlock first, then the ToolCallBlock.
+	if len(last.Content) != 2 {
+		t.Fatalf("final Content = %+v", last.Content)
+	}
+	if tb, ok := last.Content[0].(message.ThinkingBlock); !ok || tb.Thinking != "think" {
+		t.Errorf("final Content[0] = %+v", last.Content[0])
+	}
+	if tc, ok := last.Content[1].(message.ToolCallBlock); !ok || tc.ID != "call_xn5joamh" {
+		t.Errorf("final Content[1] = %+v", last.Content[1])
+	}
+	if last.Usage == nil || last.Usage.InputTokens != 131 || last.Usage.OutputTokens != 116 {
+		t.Errorf("usage = %+v", last.Usage)
+	}
+}
+
+// TestOllamaNative_ChatStream_ToolCallsInDoneFrame covers the defensive path:
+// a done frame that itself carries tool_calls.
+func TestOllamaNative_ChatStream_ToolCallsInDoneFrame(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprint(w, `{"model":"m","message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","function":{"name":"get_time","arguments":{}}}]},"done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":1}`+"\n")
+	}))
+	defer srv.Close()
+
+	m := newNativeModel(t, srv, 0)
+	ch, err := m.ChatStream(context.Background(), testMessages(), WithTools(ollamaNativeToolSchemas()))
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	resps := collectNativeStream(t, ch)
+	last := resps[len(resps)-1]
+	if !last.IsLast || last.Error != nil {
+		t.Fatalf("final = %+v", last)
+	}
+	if last.StopReason != StopReasonToolCalls {
+		t.Errorf("StopReason = %q, want %q", last.StopReason, StopReasonToolCalls)
+	}
+	if len(last.Content) != 1 {
+		t.Fatalf("final Content = %+v", last.Content)
+	}
+	if tc, ok := last.Content[0].(message.ToolCallBlock); !ok || tc.ID != "c1" {
+		t.Errorf("final Content[0] = %+v", last.Content[0])
 	}
 }

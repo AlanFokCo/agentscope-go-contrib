@@ -152,10 +152,9 @@ ag := agent.NewUnifiedAgent("edge", "You are a helpful assistant.", local,
 )
 ```
 
-With the OpenAI-compatible endpoint instead — required when the agent needs
-tool calling, which the native adapter does not support yet — `num_ctx` can
-only be set on the server. Raise it in a Modelfile and declare the same
-number as `OllamaConfig.ContextSize`:
+With the OpenAI-compatible endpoint instead, `num_ctx` can only be set on the
+server. Raise it in a Modelfile and declare the same number as
+`OllamaConfig.ContextSize`:
 
 ```
 # Modelfile
