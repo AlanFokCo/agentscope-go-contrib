@@ -13,6 +13,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental `classifier/openai` adapter for OpenAI Decisions: typed text/JSON
+  classification, complete probability-distribution validation, single guarded
+  HTTP attempts, bounded bodies and preserved failure usage. Includes examples,
+  offline tests and an opt-in live contract test; images and public refusal
+  answers are deferred. See the [guide](docs/openai-decisions.md) (#25).
+
 - `UnifiedAgent.Compact` triggers context compression on demand — the
   host-side equivalent of a `/compact` command. It runs the same
   structured-summary path as automatic compression but skips the trigger
