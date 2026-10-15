@@ -433,6 +433,37 @@ tk := tool.NewToolkit(
 )
 ```
 
+## Manual compaction
+
+`UnifiedAgent.Compact` compresses the conversation on demand — the host-side
+equivalent of a `/compact` command:
+
+```go
+compressed, err := a.Compact(ctx)
+```
+
+It runs the same structured-summary path as automatic compression but skips the
+trigger-threshold check, and reports whether the context actually changed. The
+automatic threshold itself is configurable as `ContextConfig.TriggerRatio`
+(default 0.8); no separate option is needed.
+
+Three things to know:
+
+- It requires `WithContextConfig`. Without a context window and reserve target
+  there is nothing to compact toward, and `Compact` returns an error.
+- Call it between replies, never concurrently with an active `Reply` or
+  `ReplyStream`: compaction rewrites the context the running reply is reading,
+  and with [reply recovery](reply-recovery.md) enabled it would break the
+  guarantee that a resumed reply sees exactly the context its checkpoint
+  recorded.
+- It emits no `compacted` event — that event only exists inside a reply loop —
+  so hosts should use the returned bool. An empty conversation is a no-op
+  (`false`, nil error), not an error.
+
+Manual compaction composes with the experimental
+[content-block compaction](context-compaction.md) splitter and runs through the
+`OnCompressContext` middleware chain like the automatic path.
+
 ## Schema-guided argument repair (upstream #2496)
 
 Tool-call arguments are repaired in two layers: malformed JSON goes through

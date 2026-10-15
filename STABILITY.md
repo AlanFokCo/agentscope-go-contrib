@@ -87,6 +87,11 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
 
 ## Unreleased execution and retrieval behavior
 
+- `UnifiedAgent.Compact` is Experimental despite its placement in the
+  Stable-tier `agent` package. It triggers the existing structured-summary
+  compression on demand, skipping the trigger threshold, and reports whether
+  the context changed. See [manual compaction](docs/tools.md#manual-compaction).
+
 - `agent.WithContentBlockCompaction` is Experimental despite its placement in
   the Stable-tier `agent` package. With context compression configured, it opts
   into retaining recent complete tool exchanges inside accumulated assistant

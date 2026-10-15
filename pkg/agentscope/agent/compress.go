@@ -137,19 +137,49 @@ func (c *ContextConfig) withDefaults() ContextConfig {
 // generates a structured summary of old messages using the model.
 // It runs through the OnCompressContext middleware chain if middlewares are configured.
 func (a *UnifiedAgent) compressContext(ctx context.Context) error {
-	_, err := a.compressContextWithRatio(ctx, 0)
+	_, err := a.compressContextWithRatio(ctx, 0, false)
 	return err
+}
+
+// Compact compresses the conversation history now, using the same
+// structured-summary strategy as the automatic path but without consulting
+// the trigger threshold. It reports whether the context actually changed.
+//
+// Compact requires WithContextConfig: without a context window and reserve
+// target there is nothing to compact toward, and Compact returns an error.
+// It composes with WithContentBlockCompaction and runs through the
+// OnCompressContext middleware chain like the automatic path.
+//
+// Call Compact between replies — for example from a host UI's /compact
+// command. It must not run concurrently with an active Reply or ReplyStream:
+// compaction rewrites the context the running reply is reading, and with
+// reply recovery enabled it would break the guarantee that a resumed reply
+// sees exactly the context its checkpoint recorded. Compact emits no
+// "compacted" event; that event is only reported inside a reply loop, so
+// hosts should use the returned bool instead.
+func (a *UnifiedAgent) Compact(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if a.contextCfg == nil {
+		return false, fmt.Errorf("agent %s: context compression is not configured; add WithContextConfig to enable it", a.name)
+	}
+	return a.compressContextWithRatio(ctx, 0, true)
 }
 
 // compressContextWithRatio runs the compression chain and reports whether the
 // context was actually summarized. triggerOverride replaces the configured
 // TriggerRatio when > 0; the agent-driven compress_context tool uses it to
 // lower the bar so the model can compress before the automatic threshold.
+// force skips the trigger-threshold check entirely (the exported Compact);
+// it must be a flag rather than a zero ratio because withDefaults normalizes
+// non-positive ratios back to the default, and middleware may raise the
+// ratio it passes down the chain.
 //
 // "Actually summarized" is observed from state (a new non-empty Summary, or a
 // changed context length) rather than from the handler's return value, so the
 // middleware CompressHandler API stays untouched.
-func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOverride float64) (bool, error) {
+func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOverride float64, force bool) (bool, error) {
 	if a.contextCfg == nil {
 		return false, nil
 	}
@@ -168,13 +198,13 @@ func (a *UnifiedAgent) compressContextWithRatio(ctx context.Context, triggerOver
 	var err error
 	if len(a.middlewares) == 0 {
 		cfgCopy := base
-		err = a.compressContextImpl(ctx, &cfgCopy)
+		err = a.compressContextImpl(ctx, &cfgCopy, force)
 	} else {
 		core := func(ctx context.Context, input middleware.CompressInput) error {
 			cfg := base
 			cfg.TriggerRatio = input.TriggerRatio
 			cfg.ReserveRatio = input.ReserveRatio
-			return a.compressContextImpl(ctx, &cfg)
+			return a.compressContextImpl(ctx, &cfg, force)
 		}
 		chain := middleware.BuildCompressChain(a.middlewares, core)
 		err = chain(ctx, middleware.CompressInput{
@@ -199,14 +229,14 @@ func (a *UnifiedAgent) compressContextForTool(ctx context.Context) (tool.Compres
 	if a.contextCfg == nil {
 		return tool.CompressionResult{Detail: "Context compression is not configured for this agent."}, nil
 	}
-	compressed, err := a.compressContextWithRatio(ctx, agentDrivenTriggerRatio(a.contextCfg))
+	compressed, err := a.compressContextWithRatio(ctx, agentDrivenTriggerRatio(a.contextCfg), false)
 	if err != nil {
 		return tool.CompressionResult{}, err
 	}
 	return tool.CompressionResult{Compressed: compressed}, nil
 }
 
-func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConfig) error {
+func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConfig, force bool) error {
 	if a.contentBlockCompaction && ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -231,7 +261,9 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	estimatedTokens := a.model.CountTokens(modelMsgs, toolSchemas)
 
 	threshold := int(float64(ctxSize) * cfg.TriggerRatio)
-	if estimatedTokens < threshold {
+	// A forced compaction (the exported Compact) skips the threshold check:
+	// the caller has explicitly asked for a summary now.
+	if !force && estimatedTokens < threshold {
 		return nil
 	}
 
@@ -240,6 +272,11 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	a.mu.Unlock()
 
 	if contextLen == 0 {
+		if force {
+			// A manual compact over an empty conversation is a no-op, not a
+			// configuration error: there is nothing to summarize away.
+			return nil
+		}
 		return fmt.Errorf("agent %s: system prompt (and summary) exceed compression threshold (%d tokens), cannot compress", a.name, threshold)
 	}
 

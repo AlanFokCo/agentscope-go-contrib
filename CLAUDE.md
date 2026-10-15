@@ -211,6 +211,11 @@ same compression points. It preserves call/result intervals and owned message
 fragments; defaults and checkpoint schemas are unchanged. See the
 [retention policy and fixture limits](docs/context-compaction.md).
 
+`UnifiedAgent.Compact` exposes the same pipeline for manual triggers (a host
+UI's `/compact`), skipping the trigger threshold via an explicit force flag —
+not a zero ratio, which `withDefaults` would normalize away. It is contracted
+for use between replies; see [manual compaction](docs/tools.md#manual-compaction).
+
 ### Tools, permissions and workspace boundaries
 
 Tools implement `tool.Tool`, commonly by embedding `BaseTool`. The toolkit and

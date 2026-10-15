@@ -13,6 +13,13 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- `UnifiedAgent.Compact` triggers context compression on demand — the
+  host-side equivalent of a `/compact` command. It runs the same
+  structured-summary path as automatic compression but skips the trigger
+  threshold, reports whether the context actually changed, and requires
+  `WithContextConfig`. Call it between replies; see
+  [manual compaction](docs/tools.md#manual-compaction).
+
 - Experimental `agent.WithContentBlockCompaction` retains recent complete tool
   exchanges inside an accumulated assistant message when they fit the estimated
   reserve target. Keeps cross-message reasoning preludes, parallel pairs, owned
