@@ -382,7 +382,7 @@ func TestCompressContextWithRatioHonoursOverrideUnderMiddleware(t *testing.T) {
 		a.state.Context = append(a.state.Context, textMsg("history"))
 	}
 
-	compressed, err := a.compressContextWithRatio(context.Background(), 0.4)
+	compressed, err := a.compressContextWithRatio(context.Background(), 0.4, false)
 	if err != nil {
 		t.Fatalf("compressContextWithRatio: %v", err)
 	}
