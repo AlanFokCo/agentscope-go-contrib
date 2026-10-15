@@ -574,7 +574,7 @@ Each entry states the blocker, not a priority.
 | #2386 / #2379 | team enhancements | `team/` is leader/worker only; the enhancements assume Python's team event model |
 | #2142 | full A2AAgent protocol | Needs an SDK decision first: hand-rolled types in `a2a/` versus depending on an A2A Go SDK |
 | #1755 | workspace prewarm pool | Prerequisites missing: isolation policy, and a workspace storage/lifecycle contract |
-| #2311 | MCP SSE transport | `mcp.HttpClient` is request/response JSON-RPC only (`mcp/http.go`). An SSE or streamable-HTTP transport is a separate project |
+| #2311 | MCP SSE transport | Streamable HTTP client landed via `mcp/streamablehttp` (#55), backed by the official go-sdk. The legacy (2024-11-05 HTTP+SSE) transport remains unported; `mcp.HttpClient`'s bare JSON-RPC POST (`mcp/http.go`) remains for simple servers |
 | n/a | channel and app Phase E items | Frontend work, tracked separately |
 
 Mid-stream failover is also absent: `FallbackChatModel` fails over on stream
