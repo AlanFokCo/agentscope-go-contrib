@@ -71,9 +71,16 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   within a chunk and assembled before the `TextBlock` in the final response.
   Usage comes from the final stream frame's `prompt_eval_count`/`eval_count`;
   base64 image blocks ride the native `images` field. Native tool calling is
-  not supported yet: passing `WithTools` returns an explicit error rather than
-  silently dropping the tools, and tool call/result blocks in history are not
-  replayed (there is no tool protocol to attach them to). Streaming uses a new
+  supported (#56): `WithTools` maps to the native `tools` field and responses
+  carrying `tool_calls` surface as `ToolCallBlock` with `StopReason`
+  `tool_calls` (the server reports done_reason `stop` even then, so the calls
+  take priority). A server-returned call ID is kept; an empty one (older
+  Ollama) falls back to a generated UUID — a deliberate difference from the
+  Python adapter, which always generates client-side IDs. `tool_choice` has no
+  native counterpart: its tool whitelist filters the sent tools and a
+  non-default mode only logs a warning. Tool call/result blocks in history are
+  replayed (arguments round-trip as JSON objects); an orphan tool result whose
+  call is no longer in history is skipped. Streaming uses a new
   NDJSON transport (`internal/httpx.DoNDJSONRequest`); a stream that ends
   without a `done` frame surfaces as `ChatResponse.Error` with the partial
   content preserved.

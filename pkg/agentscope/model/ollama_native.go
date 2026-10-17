@@ -8,14 +8,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/formatter"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/httpx"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 )
 
 // OllamaNativeChatModel wraps a local Ollama instance via the native
 // /api/chat endpoint, allowing per-request options (num_ctx, think) the
-// OpenAI-compatible endpoint cannot set. No API key is required. Native tool
-// calling is not supported yet: passing tools via WithTools returns an error.
+// OpenAI-compatible endpoint cannot set. No API key is required. Tool calling
+// is supported: WithTools maps to the native tools field; tool_choice has no
+// native counterpart, so its Tools whitelist filters the sent tools and a
+// non-default mode only logs a warning. Tool call IDs keep the server-returned
+// value when present and fall back to a generated UUID when empty (a
+// deliberate difference from the Python adapter, which always generates
+// client-side IDs): current Ollama sends IDs, older servers omit them, and an
+// empty or duplicated ID is ambiguous to the compaction splitter (#54).
 // WithThinking/WithThinkingDisabled map to the native think boolean; the
 // budget argument has no native counterpart and is ignored. Reasoning the
 // server reports in message.thinking (Ollama 0.9+) is surfaced as
@@ -102,7 +112,7 @@ func (m *OllamaNativeChatModel) Chat(ctx context.Context, msgs []*message.Msg, o
 		CreatedAt:  time.Now().Format(message.TimestampFormat),
 		Usage:      ollamaNativeUsage(&parsed),
 		ModelName:  parsed.Model,
-		StopReason: mapOllamaNativeStopReason(parsed.DoneReason),
+		StopReason: mapOllamaNativeStopReason(parsed.DoneReason, len(parsed.Message.ToolCalls) > 0),
 	}
 	if resp.ModelName == "" {
 		resp.ModelName = m.model
@@ -112,6 +122,9 @@ func (m *OllamaNativeChatModel) Chat(ctx context.Context, msgs []*message.Msg, o
 	}
 	if parsed.Message.Content != "" {
 		resp.Content = append(resp.Content, message.TextBlock{Type: "text", Text: parsed.Message.Content})
+	}
+	for i := range parsed.Message.ToolCalls {
+		resp.Content = append(resp.Content, parsed.Message.ToolCalls[i].toBlock())
 	}
 	return resp, nil
 }
@@ -163,15 +176,26 @@ func (m *OllamaNativeChatModel) ContextSize() int {
 }
 
 func (m *OllamaNativeChatModel) buildRequest(msgs []*message.Msg, callOpts *CallOptions, stream bool) (*ollamaNativeChatRequest, error) {
-	if len(callOpts.Tools) > 0 {
-		return nil, fmt.Errorf("ollama native: tools are not supported by the native transport yet; " +
-			"use OllamaChatModel (OpenAI-compatible endpoint) for tool calling")
-	}
-
 	reqBody := &ollamaNativeChatRequest{
 		Model:    m.model,
 		Messages: convertMessagesToOllamaNative(msgs),
 		Stream:   stream,
+	}
+
+	if len(callOpts.Tools) > 0 {
+		tools := callOpts.Tools
+		if tc := callOpts.ToolChoice; tc != nil {
+			// The native endpoint has no tool_choice field: a whitelist filters
+			// the sent tools, while a mode cannot be expressed — "auto" matches
+			// the native default and needs no warning.
+			if tc.Mode != "" && tc.Mode != "auto" {
+				logrus.WithField("mode", tc.Mode).Warn("ollama native: tool_choice mode is not supported by the native endpoint and was not sent")
+			}
+			if len(tc.Tools) > 0 {
+				tools = filterToolSchemas(tools, tc.Tools)
+			}
+		}
+		reqBody.Tools = tools
 	}
 
 	var options *ollamaNativeOptions
@@ -216,6 +240,21 @@ func (m *OllamaNativeChatModel) buildRequest(msgs []*message.Msg, callOpts *Call
 	return reqBody, nil
 }
 
+// filterToolSchemas keeps only the tools whose function name is in names.
+func filterToolSchemas(tools []ToolSchema, names []string) []ToolSchema {
+	allowed := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		allowed[n] = struct{}{}
+	}
+	var out []ToolSchema
+	for _, t := range tools {
+		if _, ok := allowed[t.Function.Name]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // processStream consumes native /api/chat NDJSON frames. Usage and done_reason
 // appear only on the final (done=true) frame; a stream that ends without one is
 // truncated: the final response carries Error plus the accumulated content.
@@ -223,13 +262,14 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 	defer close(outCh)
 
 	var (
-		accThinking strings.Builder
-		accText     strings.Builder
-		modelName   string
-		usage       *ChatUsage
-		doneReason  string
-		completed   bool
-		streamErr   error
+		accThinking  strings.Builder
+		accText      strings.Builder
+		accToolCalls []message.ToolCallBlock
+		modelName    string
+		usage        *ChatUsage
+		doneReason   string
+		completed    bool
+		streamErr    error
 	)
 
 	for evt := range ndjsonCh {
@@ -257,7 +297,10 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 		}
 
 		// Thinking is published before text within a chunk, matching the block
-		// order of the final assembled response.
+		// order of the final assembled response. The native stream delivers a
+		// complete tool_calls array atomically in one frame (after the thinking
+		// deltas), so no incremental argument assembly is needed; a done frame
+		// carrying tool_calls is handled the same way.
 		var deltaContent []message.ContentBlock
 		if frame.Message.Thinking != "" {
 			accThinking.WriteString(frame.Message.Thinking)
@@ -266,6 +309,11 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 		if frame.Message.Content != "" {
 			accText.WriteString(frame.Message.Content)
 			deltaContent = append(deltaContent, message.TextBlock{Type: "text", Text: frame.Message.Content})
+		}
+		for i := range frame.Message.ToolCalls {
+			block := frame.Message.ToolCalls[i].toBlock()
+			accToolCalls = append(accToolCalls, block)
+			deltaContent = append(deltaContent, block)
 		}
 		if len(deltaContent) > 0 {
 			select {
@@ -308,7 +356,7 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 		CreatedAt:  time.Now().Format(message.TimestampFormat),
 		Usage:      usage,
 		ModelName:  modelName,
-		StopReason: mapOllamaNativeStopReason(doneReason),
+		StopReason: mapOllamaNativeStopReason(doneReason, len(accToolCalls) > 0),
 		Error:      streamErr,
 	}
 	if thinking := accThinking.String(); thinking != "" {
@@ -316,6 +364,9 @@ func (m *OllamaNativeChatModel) processStream(ctx context.Context, ndjsonCh <-ch
 	}
 	if text := accText.String(); text != "" {
 		final.Content = append(final.Content, message.TextBlock{Type: "text", Text: text})
+	}
+	for _, tc := range accToolCalls {
+		final.Content = append(final.Content, tc)
 	}
 	select {
 	case outCh <- final:
@@ -340,10 +391,14 @@ func ollamaNativeUsage(resp *ollamaNativeChatResponse) *ChatUsage {
 	return usage
 }
 
-// mapOllamaNativeStopReason normalizes the native done_reason: "length" means
-// truncated by num_predict; any other reported value (including "stop") maps
-// to stop. Empty means the server did not report one.
-func mapOllamaNativeStopReason(doneReason string) string {
+// mapOllamaNativeStopReason normalizes the stop condition: a response carrying
+// tool_calls maps to tool_calls (the server reports done_reason "stop" even
+// then, so the calls take priority); "length" means truncated by num_predict;
+// any other reported value maps to stop. Empty means no reason was reported.
+func mapOllamaNativeStopReason(doneReason string, hasToolCalls bool) string {
+	if hasToolCalls {
+		return StopReasonToolCalls
+	}
 	switch doneReason {
 	case "":
 		return ""
@@ -356,13 +411,16 @@ func mapOllamaNativeStopReason(doneReason string) string {
 
 // convertMessagesToOllamaNative maps internal Msg instances to native
 // /api/chat messages. Replay policy: base64 image DataBlocks attach to the
-// message's images array; URL-sourced/non-image data blocks, thinking blocks
-// and tool blocks are not replayed — tool calling is unsupported, and a role
-// "tool" result without its assistant tool_calls would be an orphan the server
-// cannot interpret. A message whose blocks are all non-replayable produces no
-// wire message.
+// message's images array; URL-sourced/non-image data blocks and thinking
+// blocks are not replayed. ToolCallBlocks replay as assistant tool_calls
+// messages (Input is sent back as a JSON object) and ToolResultBlocks as role
+// "tool" messages — but only when the result's ID matches a tool call already
+// replayed: an orphan result has no matching call on the wire and is
+// uninterpretable to the server, so it is skipped. A message whose blocks are
+// all non-replayable produces no wire message.
 func convertMessagesToOllamaNative(msgs []*message.Msg) []ollamaNativeMessage {
 	var out []ollamaNativeMessage
+	seenCalls := make(map[string]struct{}) // tool call IDs already on the wire
 	for _, msg := range msgs {
 		if msg == nil {
 			continue
@@ -380,26 +438,66 @@ func convertMessagesToOllamaNative(msgs []*message.Msg) []ollamaNativeMessage {
 
 		var textParts []string
 		var images []string
+		var pendingCalls []ollamaNativeToolCall
+		flushText := func() {
+			if len(textParts) == 0 && len(images) == 0 {
+				return
+			}
+			out = append(out, ollamaNativeMessage{
+				Role:    role,
+				Content: strings.Join(textParts, "\n"),
+				Images:  images,
+			})
+			textParts, images = nil, nil
+		}
+		flushCalls := func() {
+			if len(pendingCalls) == 0 {
+				return
+			}
+			out = append(out, ollamaNativeMessage{Role: role, ToolCalls: pendingCalls})
+			pendingCalls = nil
+		}
+
 		for _, b := range blocks {
 			switch blk := b.(type) {
 			case message.TextBlock:
+				flushCalls() // a text segment after tool calls starts a new message
 				textParts = append(textParts, blk.Text)
 			case message.HintBlock:
+				flushCalls()
 				textParts = append(textParts, blk.GetHintText())
 			case message.DataBlock:
+				flushCalls()
 				if src, ok := blk.Source.(message.Base64Source); ok && strings.HasPrefix(blk.GetMediaType(), "image/") {
 					images = append(images, src.Data)
 				}
+			case message.ToolCallBlock:
+				flushText()
+				call := ollamaNativeToolCall{ID: blk.ID}
+				call.Function.Name = blk.Name
+				call.Function.Arguments = json.RawMessage(blk.Input)
+				if len(call.Function.Arguments) == 0 {
+					call.Function.Arguments = json.RawMessage("{}")
+				}
+				if blk.ID != "" {
+					seenCalls[blk.ID] = struct{}{}
+				}
+				pendingCalls = append(pendingCalls, call)
+			case message.ToolResultBlock:
+				flushText()
+				flushCalls()
+				if _, ok := seenCalls[blk.ID]; !ok {
+					continue
+				}
+				out = append(out, ollamaNativeMessage{
+					Role:    "tool",
+					Name:    blk.Name,
+					Content: formatter.ConvertToolResultToString(blk.Output),
+				})
 			}
 		}
-		if len(textParts) == 0 && len(images) == 0 {
-			continue
-		}
-		out = append(out, ollamaNativeMessage{
-			Role:    role,
-			Content: strings.Join(textParts, "\n"),
-			Images:  images,
-		})
+		flushText()
+		flushCalls()
 	}
 	return out
 }
@@ -407,11 +505,50 @@ func convertMessagesToOllamaNative(msgs []*message.Msg) []ollamaNativeMessage {
 // --- native /api/chat request/response types ---
 
 // ollamaNativeMessage is the native /api/chat message shape. Images carries
-// base64 image data (no data: URL prefix).
+// base64 image data (no data: URL prefix). Name is only set for role "tool"
+// messages.
 type ollamaNativeMessage struct {
-	Role    string   `json:"role"`
-	Content string   `json:"content"`
-	Images  []string `json:"images,omitempty"`
+	Role      string                 `json:"role"`
+	Content   string                 `json:"content"`
+	Images    []string               `json:"images,omitempty"`
+	ToolCalls []ollamaNativeToolCall `json:"tool_calls,omitempty"`
+	Name      string                 `json:"name,omitempty"`
+}
+
+// ollamaNativeToolCall is a native tool call in both directions. Deliberate
+// difference from the Python adapter, which always generates client-side IDs:
+// we keep the server-returned ID when present (current Ollama sends one) and
+// fall back to a generated UUID only when it is empty (older servers omit
+// it). An empty or duplicated ID is ambiguous to the compression splitter
+// (#54) and degrades its call/result pairing.
+type ollamaNativeToolCall struct {
+	ID       string `json:"id,omitempty"`
+	Function struct {
+		Index     int             `json:"index,omitempty"` // server-assigned, ignored
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
+// toBlock converts a wire tool call to a ToolCallBlock, generating an ID when
+// the server omitted one. An empty arguments object becomes "{}", because
+// downstream argument validation rejects an empty string.
+func (c ollamaNativeToolCall) toBlock() message.ToolCallBlock {
+	id := c.ID
+	if id == "" {
+		id = agentscope.GenerateID()
+	}
+	input := string(c.Function.Arguments)
+	if input == "" {
+		input = "{}"
+	}
+	return message.ToolCallBlock{
+		Type:  "tool_call",
+		ID:    id,
+		Name:  c.Function.Name,
+		Input: input,
+		State: message.ToolCallPending,
+	}
 }
 
 type ollamaNativeOptions struct {
@@ -427,6 +564,7 @@ type ollamaNativeChatRequest struct {
 	Messages []ollamaNativeMessage `json:"messages"`
 	Stream   bool                  `json:"stream"`
 	Options  *ollamaNativeOptions  `json:"options,omitempty"`
+	Tools    []ToolSchema          `json:"tools,omitempty"`
 	// Format is `"json"` for ResponseFormat json_object or the embedded JSON
 	// Schema object for json_schema.
 	Format json.RawMessage `json:"format,omitempty"`
@@ -441,7 +579,8 @@ type ollamaNativeChatResponse struct {
 		Content string `json:"content"`
 		// Thinking carries the model's reasoning (string per the native API;
 		// a server sending a non-string value fails decoding loudly).
-		Thinking string `json:"thinking"`
+		Thinking  string                 `json:"thinking"`
+		ToolCalls []ollamaNativeToolCall `json:"tool_calls"`
 	} `json:"message"`
 	Done            bool   `json:"done"`
 	DoneReason      string `json:"done_reason"`
