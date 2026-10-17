@@ -40,7 +40,9 @@ type StdioConfig struct {
 	Env     []string
 	WorkDir string
 
-	Stateful         bool     // true = keep subprocess alive across calls; false = ephemeral per CallTool
+	// Stateful currently has no implementation (no reader): the subprocess
+	// stays alive across calls until Close regardless of this field.
+	Stateful         bool
 	EnableTools      []string // whitelist; empty = all tools
 	DisableTools     []string // blacklist; applied after EnableTools
 	ExecutionTimeout int      // per-tool call timeout in seconds; 0 = no timeout
@@ -48,15 +50,18 @@ type StdioConfig struct {
 
 // HttpConfig configures an HTTP JSON-RPC MCP connection.
 //
-// The transport is plain request/response POST: there is no SSE or
-// streamable-HTTP support. Server-initiated messages and streaming responses are
-// therefore not available over this transport (upstream #2311 is not ported).
+// The transport is a bare JSON-RPC POST for simple 2024-11-05-era servers:
+// there is no SSE or session support. For the spec Streamable HTTP transport
+// (2025-03-26 and later), use the mcp/streamablehttp subpackage (upstream
+// #2311).
 type HttpConfig struct {
 	URL     string
 	Headers map[string]string
 	Timeout int // seconds, 0 = default (30)
 
-	Stateful         bool // true = reuse session ID across calls
+	// Stateful currently has no implementation (no reader); session semantics
+	// live in the mcp/streamablehttp subpackage.
+	Stateful         bool
 	EnableTools      []string
 	DisableTools     []string
 	ExecutionTimeout int
