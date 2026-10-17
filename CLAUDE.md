@@ -81,6 +81,13 @@ checkpoint schema compatibility and pending-tool state when changing recovery.
 Read [checkpoint tests](pkg/agentscope/agent/checkpoint_test.go) and
 [loop bridge tests](pkg/agentscope/agent/loop_bridge_test.go) for those boundaries.
 
+The `app` chat handlers register a per-run cancel handle in `ChatRunRegistry`.
+Session cancel also preserves the App's registered background-task cancellation.
+An internal context scope joins accepted Agent cores (including children sharing
+that context) before releasing the session slot; `ReplyStream` closure alone is
+not execution completion. The scope seals against late middleware core launches.
+Ordinary SDK calls have no App scope. See [App cancellation](docs/deployment.md#canceling-an-app-chat).
+
 External tools use [external_tools.go](pkg/agentscope/agent/external_tools.go)
 for input validation, host handoff and successful-result validation. Restored
 submitted calls pass through the current toolkit and permissions before handoff;

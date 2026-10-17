@@ -16,6 +16,7 @@ import (
 	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
 	agenterrors "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/internal/runctx"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/loop"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/middleware"
@@ -377,14 +378,25 @@ func (a *UnifiedAgent) replyStream(ctx context.Context, input string, resume boo
 	// the chain (swallow detection, Python #2322) and strips the internal
 	// round-boundary sentinel.
 	verdict := make(chan bool, 8)
+	// Capture the owner's scope even if middleware replaces the core context.
+	ownerCtx := ctx
 	core := func(ctx context.Context, ri middleware.ReplyInput) <-chan event.Event {
 		ch := make(chan event.Event, 32)
+		release, accepted := runctx.Start(ownerCtx)
+		if !accepted {
+			close(ch)
+			return ch
+		}
 		if run != nil && (recoveryRun(ctx) != run || !run.startCore()) {
+			release()
 			ch <- event.NewReplyEndEventWithError("", "", types.ErrorInternal, "recovery middleware must preserve its context and invoke an active reply at most once")
 			close(ch)
 			return ch
 		}
-		go a.replyLoop(ctx, ri.UserInput, ch, verdict)
+		go func() {
+			defer release()
+			a.replyLoop(ctx, ri.UserInput, ch, verdict)
+		}()
 		return ch
 	}
 	chain := middleware.BuildReplyChain(a.middlewares, core)

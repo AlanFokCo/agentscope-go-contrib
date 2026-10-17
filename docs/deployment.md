@@ -44,6 +44,32 @@ app, _ := app.CreateApp(&app.AppConfig{
 })
 ```
 
+### Canceling an App chat
+
+For the Experimental `app` package, send
+`POST /api/chat/{sessionID}/cancel` to cancel the active ordinary or streaming
+chat, together with running tasks registered for that session in the App's
+background-task manager. HTTP 200 acknowledges the cancellation request; it
+does not mean cleanup has already finished. Canceling an idle session is a no-op.
+
+Both `POST /api/chat/{sessionID}` and `POST /api/chat/{sessionID}/stream` retain
+the request's parent cancellation and deadline. After cancellation, a new chat
+for the same session receives HTTP 409 until the accepted Agent cores have
+finished, including synchronous tool cleanup and child cores sharing the run
+context. Closing a forwarded event stream alone does not release this ownership.
+Delayed middleware cannot start a core after the request's execution scope closes.
+
+Cancellation is cooperative: a tool that ignores its context retains the run
+slot until it returns. Independently launched workers and unregistered background
+work are outside this scope. The endpoint does not delete the session or its
+history, provide cross-process cancellation, or prove that remote provider work
+or billing has stopped. These routes are separate from `service.Service`.
+
+The lifecycle follows Python's [chat-run registry](https://github.com/agentscope-ai/agentscope/blob/9b94a63407ec59881fde19300b61e469a0a7d8b2/src/agentscope/app/_manager/_chat_run_registry.py)
+and [session cancellation dispatcher](https://github.com/agentscope-ai/agentscope/blob/9b94a63407ec59881fde19300b61e469a0a7d8b2/src/agentscope/app/_manager/_cancel_dispatcher.py).
+Go uses per-run context cancellation and in-process ownership; it does not port
+Python's message-bus broadcast or separate parked-session `interrupt` operation.
+
 ## Workspace Sandboxing
 
 For untrusted tool execution, use isolated workspaces:
