@@ -13,6 +13,13 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- `mcp/streamablehttp` provides a Streamable HTTP client for MCP (#55, #63),
+  backed by the official `modelcontextprotocol/go-sdk` (pinned v1.8.0) — the
+  repository's first protocol-class dependency. It implements the existing
+  `mcp.Client` interface, so `NewMCPToolkit` and agents work unchanged, with
+  automatic version negotiation across the 2026-07-28 revision and legacy
+  (2025-03-26 onward) Streamable HTTP. The subpackage keeps the dependency
+  opt-in; `mcp.HttpClient` remains for bare JSON-RPC POST servers.
 - Experimental `classifier/openai` adapter for OpenAI Decisions: typed text/JSON
   classification, complete probability-distribution validation, single guarded
   HTTP attempts, bounded bodies and preserved failure usage. Includes examples,

@@ -185,6 +185,45 @@ mcpToolkit, _ := mcp.NewMCPToolkit(ctx, client)
 merged := mcp.MergeToolkits(mcpToolkit, localToolkit)
 ```
 
+### Choosing an MCP client
+
+| Client | Use for |
+|--------|---------|
+| `StdioClient` | MCP servers run as local subprocesses (e.g. `npx @modelcontextprotocol/server-filesystem`) |
+| `HttpClient` | Simple 2024-11-05-era servers answering bare JSON-RPC POST |
+| `streamablehttp.Client` | Spec-compliant Streamable HTTP servers (spec 2025-03-26 and later), backed by the official go-sdk |
+
+```go
+import "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/mcp/streamablehttp"
+
+client, err := streamablehttp.NewClient(ctx, &streamablehttp.Config{
+    BaseURL: "http://localhost:8080/mcp", // required
+    // Optional:
+    // HTTPClient: &http.Client{Timeout: 30 * time.Second},
+    // Headers:    map[string]string{"Authorization": "Bearer " + token},
+    // ProtocolVersion: "2025-03-26", // pin only for testing/debugging
+})
+if err != nil {
+    return err
+}
+defer client.Close() // idempotent; session ends here, not with the handshake ctx
+
+mcpToolkit, err := mcp.NewMCPToolkit(ctx, client)
+```
+
+`Headers` are injected only when the SDK did not set the same header, so they
+never override protocol headers. `ProtocolVersion` is empty by default: the
+SDK negotiates automatically, and both the 2026-07-28 revision and older 2025
+versions (e.g. 2025-03-26) work through the same client. The context passed to
+`NewClient` governs the connect handshake only — the session lives until
+`Close`, which is idempotent and concurrency safe; `CallTool` is safe for
+concurrent use.
+
+The go-sdk dependency (pinned to v1.8.0) is opt-in: only importing
+`mcp/streamablehttp` compiles it, while importers of `mcp` alone do not need
+it. See [the self-contained demo](../examples/mcp_streamable/), which includes
+an in-process spec-compliant server.
+
 ## Document Parsers (RAG)
 
 The `rag/parser` package converts common file formats into `rag.Document` slices ready for indexing. Each parser supports configurable text chunking with overlap.
