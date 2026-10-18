@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 type ServerConfig struct {
@@ -130,7 +132,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	go func() { done <- s.cmd.Wait() }()
 
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			logrus.WithError(err).Debug("lsp: server process exited with error")
+		}
 	case <-time.After(5 * time.Second):
 		_ = s.cmd.Process.Kill()
 	}
