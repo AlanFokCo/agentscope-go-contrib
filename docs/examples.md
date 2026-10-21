@@ -58,6 +58,7 @@ see the [AskUser contract](tools.md#askuser).
 | [pipeline_multi_agent](../examples/pipeline_multi_agent/) | Pipeline and MsgHub coordination |
 | [agent_team](../examples/agent_team/) | Leader/worker agent coordination |
 | [mcp](../examples/mcp/) | MCP tool discovery and calls |
+| [mcp_streamable](../examples/mcp_streamable/) | MCP Streamable HTTP client with an in-process spec server |
 | [a2a_http](../examples/a2a_http/) | Agent-to-agent communication over HTTP |
 | [grpc_a2a](../examples/grpc_a2a/) | TCP messaging with newline-delimited JSON, not gRPC |
 | [replay](../examples/replay/) | Simulated response tapes and file persistence |
