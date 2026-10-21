@@ -259,6 +259,15 @@ must configure a permission context, consume `ReplyStream` and submit actual use
 answers; the [offline example](examples/ask_user/main.go) deliberately simulates
 those answers. See [the host contract](docs/tools.md#askuser) for limits and errors.
 
+`tool.ShellManager` (with the opt-in `Shell`/`ShellStdin` tools) provides
+persistent shell sessions: one long-running POSIX shell process per named
+session, serialized commands, exit codes via a same-line sentinel (a separate
+sentinel line would be swallowed by stdin-reading commands), head/tail-bounded
+output, and process-group kills on cancellation or `Kill`/`Close`. Sessions
+outlive turns by design; the host owns the manager's lifecycle. `Shell`
+delegates the `Bash` permission pipeline under its own tool name, so learned
+rules stay scoped per tool.
+
 File and command tools can use a `tool.Backend` from the context.
 `workspace.NewToolBackend` adapts a workspace for use with `tool.WithBackend`.
 When that backend is present, inspect its path and operation semantics instead

@@ -107,6 +107,11 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
   releases the agent. Per-turn reply semantics and event contracts are
   unchanged; the conversation operation and event vocabulary may still evolve.
 
+- `tool.ShellManager` and the `Shell`/`ShellStdin` tools are Experimental.
+  They add persistent shell sessions (POSIX only) with cross-call state,
+  stdin interaction and head/tail-bounded output. The tool names, session
+  semantics and result schema may still evolve.
+
 - `managedtask.Executor` is a separate fixed-deployment, plain-text, non-streaming,
   tool-disabled boundary with host disclosure/qualification, trustworthy context
   bounds, finite local admission/retries and frozen terminal accounting. Unknown

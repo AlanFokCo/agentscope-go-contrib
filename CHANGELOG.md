@@ -58,6 +58,26 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental persistent shell sessions (`tool.ShellManager` with the
+  `Shell`/`ShellStdin` tools, codex unified_exec parity): a long-running
+  shell process per named session whose working directory, exported variables
+  and foreground command survive across tool calls. Commands returning within
+  `yield_time_ms` report done with their exit code; longer commands keep
+  running and are polled or fed via `ShellStdin` (e.g. answering `read`
+  prompts). Output keeps head and tail within a byte budget, eliding the
+  middle. Cancelling a turn kills the session's process group (the session is
+  dropped and transparently recreated on next use). `Shell` reuses the `Bash`
+  permission pipeline (injection/danger heuristics, rule matching, rule
+  suggestions) under its own tool name. Requires a POSIX shell;
+  `NewShellManager` fails on Windows shells. The tools are opt-in: register
+  them via `Toolkit.AddGroup` (they are not in `NewEnhancedToolkit`'s default
+  set). Known limitations: commands must be single-line (heredoc bodies can be
+  fed via `ShellStdin`); `exit`/`exec` terminate the session and reset its
+  state; there is no PTY, so control bytes are literal input; `ShellStdin`
+  inherits the session command's earlier permission check rather than applying
+  codex-style per-write approval. See STABILITY.md for the Experimental tier
+  note.
+
 - Experimental `agent.Conversation` (`UnifiedAgent.NewConversation`): a
   persistent turn kernel with session semantics for chat-style hosts.
   `Submit` queues user input — starting a turn when idle, or steering it into
