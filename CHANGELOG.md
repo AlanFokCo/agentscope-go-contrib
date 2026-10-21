@@ -56,7 +56,60 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   under-counted — compact before the provider rejects the request. The floor
   resets on every compaction.
 
+### Changed — permission rule matching
+
+- **BREAKING (behavior)** **Bash/Shell permission rules match conjunctively
+  across subcommands:** an allow rule for `git status:*` no longer covers
+  `git status && rm -rf /` — every subcommand of a compound command
+  (`&&`/`||`/`;`/`|`, command substitutions included) must match an allow rule
+  for the invocation to be allowed, while a deny rule fires when ANY
+  subcommand matches it. `tool.MatchRule` gains the sibling entry points
+  `MatchAllSubcommands`/`MatchAnySubcommand`, and the permission engine uses
+  them through the new `permission.CompoundRuleMatcher` interface when a
+  checker's tool supports AST analysis. Commands that fail to parse no longer
+  fall back to substring matching: they simply do not match, so unparseable
+  invocations degrade to Ask instead of inheriting an allow rule. Plain
+  single commands are unaffected.
+
 ### Added
+
+- **Durable permission rules learned from approvals**
+  (`permission.RuleStore`, `Engine.SetRuleStore`,
+  `Engine.AddRulePersistent`, `config.NewSettingsRuleStore`): when a user
+  approves a tool call with "always allow"-style rules, the agent writes the
+  rule through the configured store — the settings implementation appends to
+  `.agentscope/settings.local.json` (local overrides, not committed with
+  shared project settings) in the same format `LoadProjectConfig` reads back,
+  so learned rules apply to future sessions. On store failure the rule is NOT
+  applied in memory by the engine (a believed-persisted policy silently
+  reverting next session is the dangerous failure); the agent logs a warning
+  and falls back to in-memory so the approved call can still proceed.
+  `Engine.AddRule` keeps its in-memory-only behavior for configuration-loaded
+  rules — they must not be written back.
+
+- **Workspace-jail grants for file tools** (`tool.WithWorkspaceGrants`,
+  `tool.WorkspaceEscapeError`/`WorkspaceEscapeInfo`, grant suggested rules via
+  `permission.NewGrantDirRule`, `Engine.AddWorkingDirectory`/
+  `GrantedDirectories`/`SnapshotContext`/`MergeWorkingDirectories`): when a
+  file tool under a `tool.WithWorkspaceRoot` jail rejects a path outside the
+  root, the error response now carries typed escape metadata
+  (`tool.WorkspaceEscapeMetaKey`) and the agent intercepts it BEFORE emitting
+  a result: it prompts the user to grant access to the path (the path itself
+  when it exists — a file grant does not widen to its whole directory — or the
+  parent directory for a path yet to be created; a session-scoped
+  `grant:dir:<path>` suggested rule), records the grant in
+  `permission.Context.WorkingDirectories` — a field that was previously dead
+  — and re-executes the call once with the widened jail. Every working
+  directory in permission scope (host-declared and granted) now widens the
+  jail on every tool execution. Grants are checkpointed with the agent state
+  (checkpoints now sync `PermissionCtx` from the engine, previously it was
+  never saved) and merged back on resume; they are intentionally NOT written
+  to the rule store, matching per-session sandbox-escalation semantics.
+  Concurrent tool batches cannot prompt (their event channel is nil) — the
+  escape error stands there and the model can retry the call on its own.
+  Denied prompts return the escape error with a denial note so the model can
+  pick another approach. Bash/Shell commands are unaffected: their escape
+  surface is the command text, which the permission rules already cover.
 
 - Experimental persistent shell sessions (`tool.ShellManager` with the
   `Shell`/`ShellStdin` tools, codex unified_exec parity): a long-running

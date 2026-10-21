@@ -268,6 +268,17 @@ outlive turns by design; the host owns the manager's lifecycle. `Shell`
 delegates the `Bash` permission pipeline under its own tool name, so learned
 rules stay scoped per tool.
 
+Bash/Shell rule matching is conjunctive across subcommands: a compound command
+is allowed only when EVERY subcommand matches an allow rule
+(`tool.MatchAllSubcommands`), while a deny rule fires when ANY subcommand
+matches (`tool.MatchAnySubcommand`). The engine dispatches through the
+`permission.CompoundRuleMatcher` interface; unparseable commands match no rule
+and degrade to Ask. Learned "always allow" rules persist through
+`permission.RuleStore` (`config.NewSettingsRuleStore` writes
+`.agentscope/settings.local.json`, which `LoadProjectConfig` reads back next
+session); `Engine.AddRulePersistent` refuses to apply a rule its store could
+not durably record.
+
 File and command tools can use a `tool.Backend` from the context.
 `workspace.NewToolBackend` adapts a workspace for use with `tool.WithBackend`.
 When that backend is present, inspect its path and operation semantics instead
@@ -275,7 +286,17 @@ of assuming local OS behavior. Use `path` for workspace-relative paths with
 forward slashes and `filepath` for actual host filesystem paths.
 
 Local file-tool path confinement is opt-in through `tool.WithWorkspaceRoot`;
-it does not provide process or network isolation. Permission modes, an
+it does not provide process or network isolation. Session grants widen the
+jail: when a jailed file tool rejects a path, `tool.NewErrorResponse` tags the
+response with a typed `WorkspaceEscapeInfo` and the agent prompts the user to
+grant the path (an existing path grants itself; a new path grants its parent;
+`grant:dir:` suggested rules), records it in
+`permission.Context.WorkingDirectories` (`Engine.AddWorkingDirectory`), and
+re-executes once with `tool.WithWorkspaceGrants`. Every working directory in
+scope widens the jail on each execution; grants checkpoint with the agent
+state and merge back on resume, but are never written to the rule store.
+Concurrent tool batches cannot prompt (nil event channel) — the escape error
+stands and the model may retry the call alone. Permission modes, an
 orchestrator sandbox policy and a workspace execution backend have different
 responsibilities. A configured policy does not by itself enforce all filesystem,
 network or resource restrictions. Verify each claimed boundary in the relevant

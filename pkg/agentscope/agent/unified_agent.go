@@ -317,6 +317,13 @@ func NewUnifiedAgent(name, systemPrompt string, m model.ChatModel, opts ...Agent
 	for _, opt := range opts {
 		opt(a)
 	}
+	// Restore session-granted working directories from a checkpoint. Rules
+	// and mode are NOT merged back: learned rules persist through the
+	// RuleStore/settings path, and the host's fresh configuration stays the
+	// authority on both.
+	if a.engine != nil && a.state != nil && a.state.PermissionCtx != nil {
+		a.engine.MergeWorkingDirectories(a.state.PermissionCtx.WorkingDirectories)
+	}
 	// Upstream #2143: register the agent-driven compression tool AFTER all
 	// options ran, so a WithToolkit replacement does not drop it.
 	if a.agentDrivenCompression && a.toolkit != nil {
@@ -1164,6 +1171,15 @@ func (a *UnifiedAgent) executeToolCallWithPermission(
 		return a.executeExternalTool(ctx, ch, replyID, tc, t, wasSubmitted)
 	}
 
+	// Widen the file-tool path jail with every working directory in
+	// permission scope: the host-declared session directories plus any the
+	// user granted after a jail escape. No-op for tools that never consult
+	// the jail.
+	if a.engine != nil {
+		if dirs := a.engine.GrantedDirectories(); len(dirs) > 0 {
+			ctx = tool.WithWorkspaceGrants(ctx, dirs)
+		}
+	}
 	return a.executeTool(ctx, ch, replyID, tc, actingHandler)
 }
 
@@ -1190,10 +1206,22 @@ func (a *UnifiedAgent) waitForConfirmation(ctx context.Context, toolCallID strin
 			}
 			if match != nil {
 				if match.Confirmed {
-					// Add any user-provided rules to the engine
+					// Add user-approved rules to the engine, persisting them
+					// through the configured RuleStore when one is set so
+					// "always allow" survives the session. Directory-grant
+					// rules are intercepted first: they widen the file-tool
+					// jail for the session and are neither evaluated as
+					// permission rules nor written to the rule store.
 					for _, r := range match.Rules {
 						if rule, ok := r.(permission.Rule); ok {
-							a.engine.AddRule(rule)
+							if dir, isGrant := permission.ParseGrantDirRule(rule); isGrant {
+								a.engine.AddWorkingDirectory(permission.WorkingDirectory{Path: dir, Source: "granted"})
+								continue
+							}
+							if err := a.engine.AddRulePersistent(rule); err != nil {
+								logrus.WithError(err).WithField("agent", a.name).Warn("persist permission rule failed; applying in memory only")
+								a.engine.AddRule(rule)
+							}
 						}
 					}
 					return true, match.ToolCall
@@ -1378,6 +1406,16 @@ func (a *UnifiedAgent) executeTool(
 		if resultState == message.ToolResultSuccess {
 			extra = nonTextBlocks(toolResp.Content)
 		}
+	}
+	// A workspace-jail escape arrives as an error response carrying escape
+	// metadata. Intercept BEFORE emitting the result so the stream shows a
+	// single outcome for the call: prompt for a directory grant and retry,
+	// rather than a dead-end error the model can only report back.
+	// Concurrent batches (ch == nil) and grant retries (escapeRetriedKey)
+	// skip the prompt — see handleWorkspaceEscape.
+	if esc, ok := workspaceEscapeFromMeta(toolMeta); ok && resultState == message.ToolResultError &&
+		ch != nil && a.engine != nil && ctx.Value(escapeRetriedKey{}) == nil {
+		return a.handleWorkspaceEscape(ctx, ch, replyID, tc, actingHandler, esc, outputText)
 	}
 	return a.emitToolResultWithExtra(ctx, ch, replyID, tc, resultState, outputText, extra, toolMeta)
 }

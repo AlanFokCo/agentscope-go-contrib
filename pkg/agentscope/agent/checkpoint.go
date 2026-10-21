@@ -52,6 +52,14 @@ func (a *UnifiedAgent) SaveCheckpoint(ctx context.Context) error {
 	}
 	a.mu.Lock()
 	st := *a.state
+	// Sync permission state from the engine: session-learned rules and
+	// user-granted working directories live there, while a.state.PermissionCtx
+	// only reflects what a checkpoint restore placed in it. SnapshotContext
+	// deep-copies under the engine lock; the lock order here is always
+	// agent.mu -> engine.mu and the engine never calls back into the agent.
+	if a.engine != nil {
+		st.PermissionCtx = a.engine.SnapshotContext()
+	}
 	// Preserve legacy writes for readers that support only schema 1. Recovery
 	// counters require schema 2 and must never silently disappear on downgrade.
 	st.SchemaVersion = 1

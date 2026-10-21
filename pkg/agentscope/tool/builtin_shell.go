@@ -125,6 +125,18 @@ func (t *shellTool) MatchRule(ruleContent string, input map[string]any) bool {
 	return t.perms.MatchRule(ruleContent, input)
 }
 
+// MatchAllSubcommands and MatchAnySubcommand delegate the compound matchers so
+// the engine's CompoundRuleMatcher dispatch applies to Shell exactly as to
+// Bash — without them Shell silently falls back to single-rule matching,
+// where a denied subcommand can ride on an innocent compound head.
+func (t *shellTool) MatchAllSubcommands(rules []string, input map[string]any) bool {
+	return t.perms.MatchAllSubcommands(rules, input)
+}
+
+func (t *shellTool) MatchAnySubcommand(rules []string, input map[string]any) bool {
+	return t.perms.MatchAnySubcommand(rules, input)
+}
+
 func (t *shellTool) GenerateSuggestions(input map[string]any) []permission.Rule {
 	return t.perms.GenerateSuggestions(input)
 }
