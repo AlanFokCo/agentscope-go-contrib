@@ -31,6 +31,21 @@ import (
 const (
 	defaultUnifiedMaxIters = 20
 	defaultTriggerRatio    = 0.8
+
+	// defaultModelAttempts is the default number of model-call attempts
+	// (initial try plus retries) when ModelConfig.MaxRetries is unset.
+	// Transient provider failures (429/5xx/network) are the norm over a
+	// long agent run; failing the whole reply on the first blip makes the
+	// agent unusable. Only errors classified as transient are retried.
+	defaultModelAttempts = 3
+
+	// maxContextOverflowRecoveries bounds how often one reasoning-acting
+	// round may recover from a provider context-window rejection. Each
+	// recovery shrinks the context (tool-result truncation first, then a
+	// forced compaction); a request that still overflows after this many
+	// shrinks is wedged (e.g. a single message larger than the window) and
+	// must surface as an error instead of looping.
+	maxContextOverflowRecoveries = 3
 )
 
 // UnifiedAgent is the v2 agent that uses native tool calling and supports streaming.
@@ -51,6 +66,12 @@ type UnifiedAgent struct {
 
 	contentBlockCompaction bool
 	compactionVersion      uint64
+
+	// lastModelInputTokens is the provider-reported input size of the most
+	// recent successful model call. It grounds the compression trigger:
+	// byte-based estimates misjudge JSON tool blocks, code and CJK text,
+	// while the provider's own count is exact for the request it served.
+	lastModelInputTokens int
 
 	confirmCh      chan event.UserConfirmResultEvent
 	externalCh     chan event.ExternalExecutionResultEvent
@@ -651,6 +672,7 @@ func (a *UnifiedAgent) reactRound(
 	curState := protocol.StateReason
 	finishedNormally := false
 
+	overflowRecoveries := 0
 	startIteration := 0
 	if run := recoveryRun(ctx); run != nil {
 		startIteration = run.iteration()
@@ -790,6 +812,21 @@ reactLoop:
 				if ctx.Err() != nil {
 					return types.ReplyInterrupted, madeProgress, nil
 				}
+				// The provider rejected the request as too large. The token
+				// estimate that gates automatic compression is heuristic, so
+				// this happens in practice; recover like codex does: shrink
+				// the context and retry the same step instead of killing the
+				// reply. Bounded so a wedged request still fails honestly.
+				if model.IsContextLimitExceeded(err) && overflowRecoveries < maxContextOverflowRecoveries {
+					overflowRecoveries++
+					logrus.WithError(err).WithField("agent", a.name).Warn(
+						"provider reports context overflow; shrinking context and retrying")
+					emit(ctx, ch, event.NewCustomEvent(replyID, "context_overflow_recovery",
+						map[string]any{"attempt": overflowRecoveries}))
+					a.recoverContextOverflow(ctx)
+					iter--
+					continue
+				}
 				info := classifyReplyError(err)
 				return types.ReplyError, madeProgress, &info
 			}
@@ -817,6 +854,11 @@ reactLoop:
 				outputTok = resp.Usage.OutputTokens
 				cacheCreate = resp.Usage.CacheCreationInputTokens
 				cacheRead = resp.Usage.CacheInputTokens
+				if total := resp.Usage.EffectiveInputTokens(); total > 0 {
+					a.mu.Lock()
+					a.lastModelInputTokens = total
+					a.mu.Unlock()
+				}
 			}
 			emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID, inputTok, outputTok, cacheCreate, cacheRead))
 
@@ -914,6 +956,10 @@ func classifyReplyError(err error) types.ReplyErrorInfo {
 	case errors.Is(err, agenterrors.ErrModelTimeout):
 		t = types.ErrorConnection
 	case errors.Is(err, agenterrors.ErrModelContextLimit):
+		t = types.ErrorInvalidRequest
+	case model.IsContextLimitExceeded(err):
+		// Adapters surface overflow as plain HTTP error strings; give them
+		// the same taxonomy slot as the typed sentinel.
 		t = types.ErrorInvalidRequest
 	}
 	var ae *agenterrors.AgentError
@@ -1503,17 +1549,17 @@ func (a *UnifiedAgent) prepareModelInput(ctx context.Context) []*message.Msg {
 func (a *UnifiedAgent) callModel(ctx context.Context, msgs []*message.Msg, opts []model.CallOption) (*model.ChatResponse, error) {
 	retries := a.modelCfg.MaxRetries
 	if retries <= 0 {
-		retries = 1
+		retries = defaultModelAttempts
 	}
 	delay := a.modelCfg.RetryDelay
-	if delay == 0 {
+	if delay <= 0 {
 		delay = time.Second
 	}
 
 	var lastErr error
 	for i := 0; i < retries; i++ {
 		if i > 0 {
-			timer := time.NewTimer(delay)
+			timer := time.NewTimer(retryBackoff(delay, i))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -1533,6 +1579,14 @@ func (a *UnifiedAgent) callModel(ctx context.Context, msgs []*message.Msg, opts 
 		}
 		if err == nil {
 			return resp, nil
+		}
+		// Permanent errors (4xx other than 429) are not worth retrying on
+		// the same model; stop retrying and let the fallback try. A
+		// context-window rejection also stops retries: the fallback may
+		// have a larger window, and the reply loop compacts otherwise.
+		if model.IsContextLimitExceeded(err) || !model.IsRetryableError(err) {
+			lastErr = err
+			break
 		}
 		lastErr = err
 	}

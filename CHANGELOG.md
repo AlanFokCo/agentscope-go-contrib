@@ -11,6 +11,51 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ## [Unreleased]
 
+### Changed — agent loop resilience
+
+- **Model-call retry policy (behavior change):** with `ModelConfig.MaxRetries`
+  unset, `UnifiedAgent` now attempts a model call up to 3 times (was 1) before
+  failing the reply, with full-jitter exponential backoff starting from
+  `RetryDelay`. Only errors classified as transient (`model.IsRetryableError`)
+  are retried; permanent errors (4xx other than 429) fail fast on the primary
+  and still fall through to `FallbackModel`. Buffered and streaming paths share
+  the policy.
+- **Established stream replay:** a provider stream that fails before publishing
+  any text/thinking delta is re-attempted, since replay is invisible to
+  consumers. A stream that fails after publishing deltas still fails the reply
+  (partial output cannot be replayed without duplication); this narrows the
+  previous "established streams are never retried" behavior from #17.
+- **Context-window overflow recovery:** when a provider rejects a request as
+  too large (detected via the new `model.IsContextLimitExceeded`, which honors
+  `errors.ErrModelContextLimit` and the documented Anthropic/OpenAI/Gemini/
+  Ollama/DashScope/Moonshot wordings), the reply loop shrinks the context —
+  truncating oversized tool results first, then forcing a summarizing
+  compaction — and retries the same step, bounded at 3 recoveries per round.
+  Previously the reply failed immediately. Emits a `context_overflow_recovery`
+  custom event per attempt. When the agent never configured a `ContextConfig`,
+  the recovery arms the default one, so auto-compaction stays enabled for the
+  agent's remaining lifetime after the first overflow.
+- **Streamed tool calls with broken arguments** (e.g. JSON truncated mid-stream)
+  are committed and answered with a parse-error tool result so the model can
+  re-issue the call, instead of failing the whole reply; formatters already
+  repair such arguments for wire validity on later rounds. Tool calls without a
+  name still fail the reply as stream corruption. This narrows the #17
+  "incomplete tool calls are not committed" behavior.
+- **Tool-result truncation keeps head and tail:** `agent.TruncateToolResult`
+  now elides the middle with a `<<<TRUNCATED: N bytes elided>>>` marker instead
+  of cutting at a prefix `<<<TRUNCATED>>>` marker, since shell-log errors live
+  at the tail and file structure at the head. Cuts land on rune boundaries so
+  truncated output stays valid UTF-8. `agent.SplitToolResultForCompression`
+  keeps its prefix contract.
+- **Compression trigger grounded in actual usage:** the automatic compression
+  estimate now takes the max of the byte heuristic and the provider-reported
+  total input tokens of the last successful model call
+  (`ChatUsage.EffectiveInputTokens`; the new `ChatUsage.TotalInputTokens` field
+  carries Anthropic's cache-inclusive total, which its `input_tokens`
+  excludes), so CJK/JSON-heavy or cache-hit contexts — both systematically
+  under-counted — compact before the provider rejects the request. The floor
+  resets on every compaction.
+
 ### Added
 
 - Experimental `classifier/openai` adapter for OpenAI Decisions: typed text/JSON

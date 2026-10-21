@@ -54,7 +54,13 @@ agent use cases.
 `UnifiedAgent.ReplyStream` uses `ChatStream` for ordinary rounds and forced
 finalization when model streaming is enabled (the default) and no middleware is
 installed. `agent/model_stream.go` converts text/thinking deltas to events, checks
-final consistency and rejects incomplete streams before tool execution. Legacy
+final consistency and rejects incomplete streams before tool execution. Streams
+that fail before publishing any delta are replayed (bounded, transient errors
+only); streams that fail after publishing, and completed-but-errored responses,
+are terminal. Tool calls with broken streamed arguments are answered with a
+parse-error result instead of failing the reply; nameless calls still fail.
+Provider context-window rejections trigger bounded in-reply recovery (tool-result
+truncation, then forced compaction) instead of failing the reply. Legacy
 middleware chains and `WithModelStreaming(false)` use buffered `callModel`/`Chat`
 so response filters run before publication. `Reply` drains the same event path and
 returns terminal reply errors. `UnifiedAgentRunner.LoopOptions` connects the
