@@ -68,6 +68,19 @@ agent to `loop.Loop`; its model adapter still uses buffered `callModel`.
 When changing retries, cancellation, permissions or accounting, trace the
 specific entry point and its adapters rather than assuming they share all hooks.
 
+`agent/conversation.go` adds `Conversation`, an experimental persistent turn
+kernel (codex session/queue parity): `Submit` queues input, injecting it at
+the certified StateReason boundary (where `checkNextAction` has certified no
+tool call awaits its result) so a steered message never splits a
+tool_call/tool_result pair;
+`Interrupt` cancels the turn context — killing in-flight tool processes — and
+retains pending input for the next turn, appending a model-visible marker;
+`Compact` queues compression to the same boundary. Conversation turns emit
+terminal events on the conversation context so an interrupted turn's
+`ReplyEnd` survives cancellation, and steered input is checkpointed before
+the next model call. While a conversation is active, direct
+`Reply`/`ReplyStream`/`ResumeReplyStream` are rejected.
+
 `Middleware` provides reply, reasoning, model-call, acting, system-prompt,
 compression and permission hooks, plus tool registration. `BaseMiddleware`
 provides defaults. System-prompt transformation is a pipeline; the other hooks

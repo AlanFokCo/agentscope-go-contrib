@@ -95,6 +95,14 @@ type UnifiedAgent struct {
 	// model itself can trigger compression (upstream #2143).
 	agentDrivenCompression bool
 	modelStreaming         bool
+
+	// activeConv, when non-nil, is the Conversation owning this agent:
+	// direct Reply/ReplyStream/ResumeReplyStream calls are rejected for the
+	// conversation's lifetime and turns enter through Conversation.Submit.
+	// activeReplies counts in-flight replies so NewConversation can refuse
+	// to take over a busy agent. Both are guarded by mu.
+	activeConv    *Conversation
+	activeReplies int
 }
 
 // ReactConfig controls the ReAct reasoning-acting loop.
@@ -368,6 +376,9 @@ func (a *UnifiedAgent) Reply(ctx context.Context, input string) (*message.Msg, e
 }
 
 // ReplyStream processes input and returns a channel of events (streaming).
+// Callers must drain the channel until it closes (or cancel ctx): an
+// abandoned stream wedges the forwarder and keeps the agent's in-flight
+// reply slot held, which also blocks NewConversation.
 func (a *UnifiedAgent) ReplyStream(ctx context.Context, input string) (<-chan event.Event, error) {
 	return a.replyStream(ctx, input, false)
 }
@@ -377,6 +388,18 @@ func (a *UnifiedAgent) replyStream(ctx context.Context, input string, resume boo
 		return nil, fmt.Errorf("agent %s: empty input", a.name)
 	}
 
+	// Conversation exclusivity: while a Conversation owns the agent, only
+	// its own turns (carrying the conversation handle) may run.
+	a.mu.Lock()
+	if a.activeConv != nil {
+		if th := conversationTurnFrom(ctx); th == nil || th.conv != a.activeConv {
+			a.mu.Unlock()
+			return nil, fmt.Errorf("agent %s: a conversation is active; submit input via Conversation.Submit", a.name)
+		}
+	}
+	a.activeReplies++
+	a.mu.Unlock()
+
 	// Attach MiddleContext to the Go context for middleware state storage.
 	mc := middleware.MiddleContext{}
 	ctx = middleware.WithMiddleContext(ctx, mc)
@@ -385,6 +408,7 @@ func (a *UnifiedAgent) replyStream(ctx context.Context, input string, resume boo
 		var err error
 		ctx, run, err = a.beginRecovery(ctx, resume)
 		if err != nil {
+			a.replyDone()
 			return nil, err
 		}
 	}
@@ -430,6 +454,14 @@ func (a *UnifiedAgent) replyStream(ctx context.Context, input string, resume boo
 	go func() {
 		defer close(out)
 		defer a.sealRecovery(run)
+		defer a.replyDone()
+		// Conversation turns keep forwarding on the session context: after
+		// Interrupt cancels the turn context, the terminal ReplyEnd must
+		// still escape instead of racing ctx.Done() in the select below.
+		fwdCtx := ctx
+		if th := conversationTurnFrom(ctx); th != nil {
+			fwdCtx = th.conv.ctx
+		}
 		var curReplyID string
 		failurePublished := false
 		sawEnd := false
@@ -459,20 +491,32 @@ func (a *UnifiedAgent) replyStream(ctx context.Context, input string, resume boo
 			}
 			select {
 			case out <- evt:
-			case <-ctx.Done():
+			case <-fwdCtx.Done():
 				return
 			}
 		}
 		if run != nil && run.err() != nil && !failurePublished {
-			emit(ctx, out, event.NewReplyEndEventWithError(a.state.SessionID, curReplyID, types.ErrorInternal, checkpointError(run.err()).Message))
+			emit(fwdCtx, out, event.NewReplyEndEventWithError(a.state.SessionID, curReplyID, types.ErrorInternal, checkpointError(run.err()).Message))
 		}
 	}()
 	return out, nil
 }
 
+// replyDone releases one in-flight reply slot (see activeReplies).
+func (a *UnifiedAgent) replyDone() {
+	a.mu.Lock()
+	a.activeReplies--
+	a.mu.Unlock()
+}
+
 // Observe injects external messages into the agent's context.
 // It validates each message: system-role messages and messages containing
 // tool_call, tool_result, or thinking blocks are rejected.
+//
+// Observe is not safe to call while a reply is running: an injection that
+// lands between a pending tool_call and its tool_result splits the pair and
+// orphans the call. When a Conversation is active, use Conversation.Submit
+// instead — it injects only at the certified StateReason boundary.
 func (a *UnifiedAgent) Observe(ctx context.Context, msgs []*message.Msg) error {
 	for _, m := range msgs {
 		if m == nil {
@@ -544,6 +588,16 @@ const roundBoundSentinel = "agentscope.round_bound"
 func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- event.Event, verdict <-chan bool) {
 	defer close(ch)
 
+	// Conversation turns emit terminal events on the session context:
+	// Interrupt cancels the turn context before these fire, and a
+	// canceled-ctx select may silently drop the ReplyEnd (the host would
+	// see the turn hang). Non-conversation replies keep ctx, so behavior
+	// is unchanged outside conversations.
+	endCtx := ctx
+	if th := conversationTurnFrom(ctx); th != nil {
+		endCtx = th.conv.ctx
+	}
+
 	hooks := a.hookRunner
 	if hooks == nil {
 		hooks = loop.NewHookRunner()
@@ -592,7 +646,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 
 	if run != nil {
 		if err := a.checkpointBoundary(ctx); err != nil {
-			emit(ctx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(err).Message))
+			emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(err).Message))
 			return
 		}
 	}
@@ -610,7 +664,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 	for {
 		reason, progress, errInfo := a.reactRound(ctx, ch, replyID, hooks, modelCallHandler, actingHandler)
 		if run != nil && run.err() != nil {
-			emit(ctx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(run.err()).Message))
+			emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(run.err()).Message))
 			return
 		}
 		if progress {
@@ -619,14 +673,14 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 
 		if reason == types.ReplyInterrupted {
 			// Cannot be swallowed to continue the reply (Python parity).
-			emit(ctx, ch, event.NewReplyEndEventWithReason(a.state.SessionID, replyID, reason))
+			emit(endCtx, ch, event.NewReplyEndEventWithReason(a.state.SessionID, replyID, reason))
 			return
 		}
 
 		if errInfo != nil {
-			emit(ctx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, errInfo.Type, errInfo.Message))
+			emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, errInfo.Type, errInfo.Message))
 		} else {
-			emit(ctx, ch, event.NewReplyEndEventWithReason(a.state.SessionID, replyID, reason))
+			emit(endCtx, ch, event.NewReplyEndEventWithReason(a.state.SessionID, replyID, reason))
 		}
 
 		emit(ctx, ch, event.NewCustomEvent(replyID, roundBoundSentinel, nil))
@@ -644,7 +698,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 					"error": "a middleware swallowed the ReplyEndEvent twice without progress",
 				}))
 				// Keep the reply start/end pairing intact.
-				emit(ctx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID,
+				emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID,
 					types.ErrorInternal, "ReplyEndEvent swallowed repeatedly without progress"))
 				return
 			}
@@ -764,6 +818,18 @@ reactLoop:
 			continue
 
 		case protocol.StateReason:
+			// Conversation steering drain (EXPERIMENTAL): user input queued
+			// via Conversation.Submit during the turn is injected here — the
+			// certified boundary where checkNextAction has confirmed no tool
+			// call awaits its result, so appending user messages can never
+			// split a tool_call/tool_result pair (ad-hoc mid-turn Observe
+			// injection lacks this guarantee).
+			if th := conversationTurnFrom(ctx); th != nil {
+				if err := a.drainConversationOps(ctx, ch, replyID, th.conv); err != nil {
+					return types.ReplyError, madeProgress, checkpointError(err)
+				}
+			}
+
 			// Compress context before model call. Detect whether compression
 			// actually happened by observing state.Summary change, and emit a
 			// "compacted" CustomEvent so consumers can surface it (e.g. lathe's

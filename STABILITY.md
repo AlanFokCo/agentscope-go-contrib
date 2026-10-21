@@ -99,6 +99,14 @@ ports and deferred work, including realtime/TUI, SOP and model-context wiring.
   oversized/no-prefix cases keep the wholesale emergency fallback. See the
   [compaction policy and provider limits](docs/context-compaction.md).
 
+- `agent.Conversation` (`UnifiedAgent.NewConversation`) is Experimental despite
+  its placement in the Stable-tier `agent` package. It adds a persistent turn
+  kernel — queued input, mid-turn steering, Interrupt and queued compaction —
+  on top of the one-shot reply API. While a conversation is active, direct
+  `Reply`/`ReplyStream`/`ResumeReplyStream` calls are rejected; `Close`
+  releases the agent. Per-turn reply semantics and event contracts are
+  unchanged; the conversation operation and event vocabulary may still evolve.
+
 - `managedtask.Executor` is a separate fixed-deployment, plain-text, non-streaming,
   tool-disabled boundary with host disclosure/qualification, trustworthy context
   bounds, finite local admission/retries and frozen terminal accounting. Unknown

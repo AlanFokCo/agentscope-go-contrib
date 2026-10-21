@@ -58,6 +58,22 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- Experimental `agent.Conversation` (`UnifiedAgent.NewConversation`): a
+  persistent turn kernel with session semantics for chat-style hosts.
+  `Submit` queues user input — starting a turn when idle, or steering it into
+  the active turn at the certified boundary (a StateReason iteration, where no
+  tool call awaits its result, so injection can never split a
+  tool_call/tool_result pair) — with an immediate checkpoint and a
+  `conversation_input_injected` event per batch. `Interrupt` cancels the turn
+  context (killing in-flight tool processes), still delivers the terminal
+  `ReplyEnd` on the session-lifetime stream, appends a model-visible
+  interruption marker, and retains pending input for the next turn — a
+  deliberate divergence from codex, which discards pending input on
+  interrupt. `Compact` queues a forced compression to the same boundary, or
+  runs immediately between turns. While a conversation is active, direct
+  `Reply`/`ReplyStream`/`ResumeReplyStream` calls are rejected; `Close`
+  releases the agent. See STABILITY.md for the Experimental tier note.
+
 - Experimental `classifier/openai` adapter for OpenAI Decisions: typed text/JSON
   classification, complete probability-distribution validation, single guarded
   HTTP attempts, bounded bodies and preserved failure usage. Includes examples,
