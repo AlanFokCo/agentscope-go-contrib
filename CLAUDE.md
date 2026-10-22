@@ -108,7 +108,10 @@ requires a `StateSaver`; run the branch via `LoadCheckpoint` + `WithState`.
 
 Model streams carry an idle guard (`ModelConfig.StreamIdleTimeout`, 5-minute
 default): a silent stream is a transport failure — replayed while unpublished,
-fatal once deltas escaped.
+fatal once deltas escaped. Every reply ends with a `turn_stats` custom event
+aggregating model calls, tool calls, iterations and token usage; on the
+middleware swallow path it follows the delivered ReplyEnd, never preceding a
+round that gets swallowed.
 
 The `app` chat handlers register a per-run cancel handle in `ChatRunRegistry`.
 Session cancel also preserves the App's registered background-task cancellation.

@@ -39,6 +39,12 @@ const (
 	// agent unusable. Only errors classified as transient are retried.
 	defaultModelAttempts = 3
 
+	// defaultStreamIdleTimeout is the default maximum silence on a model
+	// stream (5 minutes, codex stream_idle_timeout_ms parity). A stream
+	// silent this long is effectively dead; continuing to wait would hang
+	// the reply forever.
+	defaultStreamIdleTimeout = 5 * time.Minute
+
 	// maxContextOverflowRecoveries bounds how often one reasoning-acting
 	// round may recover from a provider context-window rejection. Each
 	// recovery shrinks the context (tool-result truncation first, then a
@@ -107,6 +113,11 @@ type UnifiedAgent struct {
 	// to take over a busy agent. Both are guarded by mu.
 	activeConv    *Conversation
 	activeReplies int
+
+	// stats accumulates per-reply usage for the turn_stats event. It stays
+	// installed after the reply ends so a swallowed round keeps
+	// accumulating; the next replyLoop's beginTurnStats replaces it.
+	stats *turnStats
 }
 
 // ReactConfig controls the ReAct reasoning-acting loop.
@@ -120,6 +131,14 @@ type ModelConfig struct {
 	MaxRetries    int
 	RetryDelay    time.Duration
 	FallbackModel model.ChatModel
+
+	// StreamIdleTimeout bounds the silence a model stream may produce: the
+	// gap between stream setup and the first chunk, and between any two
+	// chunks. A silent stream is treated as a transport failure — retried
+	// while nothing was published, failing the reply once partial output
+	// escaped (codex stream_idle_timeout parity). Zero selects the default
+	// (defaultStreamIdleTimeout); a negative value disables the guard.
+	StreamIdleTimeout time.Duration
 }
 
 // AgentState holds conversation state for a session.
@@ -645,6 +664,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 		a.state.CurIter = 0
 	}
 	a.mu.Unlock()
+	a.beginTurnStats()
 
 	// HARNESS_DESIGN A2: make the reply ID visible to middleware hooks
 	// (recorders, etc.) via the MiddleContext and to audit loggers via ctx.
@@ -667,6 +687,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 
 	if run != nil {
 		if err := a.checkpointBoundary(ctx); err != nil {
+			a.emitTurnStats(endCtx, ch, replyID)
 			emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(err).Message))
 			return
 		}
@@ -685,6 +706,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 	for {
 		reason, progress, errInfo := a.reactRound(ctx, ch, replyID, hooks, modelCallHandler, actingHandler)
 		if run != nil && run.err() != nil {
+			a.emitTurnStats(endCtx, ch, replyID)
 			emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID, types.ErrorInternal, checkpointError(run.err()).Message))
 			return
 		}
@@ -694,6 +716,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 
 		if reason == types.ReplyInterrupted {
 			// Cannot be swallowed to continue the reply (Python parity).
+			a.emitTurnStats(endCtx, ch, replyID)
 			emit(endCtx, ch, event.NewReplyEndEventWithReason(a.state.SessionID, replyID, reason))
 			return
 		}
@@ -708,6 +731,9 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 		select {
 		case delivered := <-verdict:
 			if delivered {
+				// The end event escaped; stats follow it (a swallowed round
+				// must not surface partial-turn stats as final).
+				a.emitTurnStats(endCtx, ch, replyID)
 				return
 			}
 			// Swallowed: force another round — unless the middleware keeps
@@ -719,6 +745,7 @@ func (a *UnifiedAgent) replyLoop(ctx context.Context, input string, ch chan<- ev
 					"error": "a middleware swallowed the ReplyEndEvent twice without progress",
 				}))
 				// Keep the reply start/end pairing intact.
+				a.emitTurnStats(endCtx, ch, replyID)
 				emit(endCtx, ch, event.NewReplyEndEventWithError(a.state.SessionID, replyID,
 					types.ErrorInternal, "ReplyEndEvent swallowed repeatedly without progress"))
 				return
@@ -754,6 +781,7 @@ func (a *UnifiedAgent) reactRound(
 	}
 reactLoop:
 	for iter := startIteration; iter < a.reactCfg.MaxIters; iter++ {
+		a.recordIteration(iter)
 		if run := recoveryRun(ctx); run != nil {
 			run.setIteration(iter)
 		}
@@ -805,6 +833,7 @@ reactLoop:
 		case protocol.StateAct:
 			// Execute pending tool calls from prior iteration
 			toolCalls := a.getExecutableToolCalls()
+			a.recordToolCalls(len(toolCalls))
 			batches := batchToolCalls(toolCalls, a.toolkit, a.wouldRequireHITL)
 			for _, batch := range batches {
 				if batch.concurrent && len(batch.calls) > 1 {
@@ -873,6 +902,7 @@ reactLoop:
 			// model-call-end event so budgets, cost tracking and
 			// reply-message accounting include it.
 			if cu := a.takeCompressionUsage(); cu != nil {
+				a.recordModelCallUsage(cu)
 				emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID,
 					cu.InputTokens, cu.OutputTokens,
 					cu.CacheCreationInputTokens, cu.CacheInputTokens))
@@ -947,6 +977,7 @@ reactLoop:
 					a.mu.Unlock()
 				}
 			}
+			a.recordModelCallUsage(resp.Usage)
 			emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID, inputTok, outputTok, cacheCreate, cacheRead))
 
 			// Transition to Inspect after model call
@@ -985,6 +1016,7 @@ reactLoop:
 			curState = protocol.StateAct
 
 			// Execute tool calls
+			a.recordToolCalls(len(toolCalls))
 			batches := batchToolCalls(toolCalls, a.toolkit, a.wouldRequireHITL)
 			for _, batch := range batches {
 				if batch.concurrent && len(batch.calls) > 1 {
@@ -2030,6 +2062,7 @@ func (a *UnifiedAgent) forcedFinalSummary(ctx context.Context, ch chan<- event.E
 		cacheCreate = resp.Usage.CacheCreationInputTokens
 		cacheRead = resp.Usage.CacheInputTokens
 	}
+	a.recordModelCallUsage(resp.Usage)
 	emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID, inputTok, outputTok, cacheCreate, cacheRead))
 
 	// tool_choice "none" is a request, not a guarantee: local and

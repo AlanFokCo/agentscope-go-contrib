@@ -96,6 +96,16 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   forever; a negative value disables the guard. Buffered (`Chat`) calls are
   unaffected — provider transport timeouts govern those.
 
+- **Per-reply `turn_stats` custom event** (codex token-count parity): every
+  reply now reports its aggregate usage alongside the terminal ReplyEndEvent —
+  model calls, tool calls, iterations, duration, summed input/output/cache
+  tokens and the final provider-reported context fill
+  (`last_input_tokens`). Failed and interrupted replies report partial usage
+  so hosts can account burned tokens. Emitted before the end event on direct
+  terminal paths and right after the delivered end event when middleware
+  round-swallowing is in play (a swallowed round never publishes
+  partial-turn stats as final).
+
 - **`update_plan` tool** (`agent.WithPlanTool`, codex parity): the model
   maintains a visible step plan — `{explanation?, plan: [{step, status}]}`,
   at most one `in_progress` — stored in `AgentState.Plan` (new checkpointed
