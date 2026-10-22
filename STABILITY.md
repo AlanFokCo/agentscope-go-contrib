@@ -605,6 +605,19 @@ explicitly configured `OllamaConfig.ContextSize`. Wiring this means adding
 `ResolveContextSize` report a card's maximum for an undeclared window, which is
 not the server's `num_ctx`.
 
+## Codex-alignment non-goals
+
+The codex-parity work (conversation kernel, persistent shell, permission
+hardening, plan/context tools, elicitation, pre-compression) deliberately
+stops at three codex mechanisms. These are policy statements, not pending
+work; revisit only with a concrete portability or contract argument.
+
+| Codex mechanism | Why agentscope-go does not adopt it |
+|---|---|
+| OS-level command sandbox (seatbelt/Landlock) | A library cannot confine its host process, and per-process syscall policy is a deployment concern. Isolation lives at the layers a library can own: the permission engine gates every tool call (conjunctive subcommand matching, persistent learned rules), `LocalWorkspace`/`BubblewrapWorkspace` provide path jails and container-grade isolation, and MCP subprocesses start with a minimal environment. Hosts needing kernel confinement should run the agent process itself inside a container or seatbelt wrapper. |
+| Guardian (secondary-model action review) | A fixed guardian policy would hard-code model, prompt and UX choices that hosts legitimately differ on. The interception point already exists: a host middleware implementing `OnActing`/`OnCheckPermission` can route any tool call through its own reviewer model before returning a decision. |
+| Blocking config-time hooks | Constructors are pure and panic only on programmer error (see "Construction contract"); `LoadProjectConfig` reads project instruction and settings files without executing anything. Running host commands at construction or config load would invert that contract and put unobservable side effects outside the permission engine. Lifecycle interception belongs to middleware, which runs inside the reply loop with event visibility. |
+
 ## Open hardening work
 
 - **Unify the two price types.** `middleware.ModelPrice`
