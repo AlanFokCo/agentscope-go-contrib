@@ -106,6 +106,10 @@ snapshot under a new session ID (context, summary, plan and permission grants;
 reply ID and recovery counters cleared). It is a between-replies operation and
 requires a `StateSaver`; run the branch via `LoadCheckpoint` + `WithState`.
 
+Model streams carry an idle guard (`ModelConfig.StreamIdleTimeout`, 5-minute
+default): a silent stream is a transport failure — replayed while unpublished,
+fatal once deltas escaped.
+
 The `app` chat handlers register a per-run cancel handle in `ChatRunRegistry`.
 Session cancel also preserves the App's registered background-task cancellation.
 An internal context scope joins accepted Agent cores (including children sharing

@@ -87,6 +87,15 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- **Model stream idle timeout** (`ModelConfig.StreamIdleTimeout`, codex
+  `stream_idle_timeout` parity): a stream silent past the timeout — between
+  setup and the first chunk, or between chunks — is treated as a transport
+  failure: retried while nothing was published, failing the reply once
+  partial output escaped (never replaying rendered deltas). Unset selects a
+  5-minute default, so a wedged provider stream can no longer hang a reply
+  forever; a negative value disables the guard. Buffered (`Chat`) calls are
+  unaffected — provider transport timeouts govern those.
+
 - **`update_plan` tool** (`agent.WithPlanTool`, codex parity): the model
   maintains a visible step plan — `{explanation?, plan: [{step, status}]}`,
   at most one `in_progress` — stored in `AgentState.Plan` (new checkpointed

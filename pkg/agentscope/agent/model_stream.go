@@ -193,6 +193,13 @@ func (a *UnifiedAgent) callModelStreaming(ctx context.Context, msgs []*message.M
 	if a.modelCfg.FallbackModel != nil {
 		targets = append(targets, a.modelCfg.FallbackModel)
 	}
+	idleTimeout := a.modelCfg.StreamIdleTimeout
+	if idleTimeout == 0 {
+		idleTimeout = defaultStreamIdleTimeout
+	}
+	if idleTimeout < 0 {
+		idleTimeout = 0
+	}
 	var lastErr error
 	for index, target := range targets {
 		n := attempts
@@ -212,7 +219,7 @@ func (a *UnifiedAgent) callModelStreaming(ctx context.Context, msgs []*message.M
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			resp, established, err := streamModelAttempt(ctx, target, msgs, opts, s)
+			resp, established, err := streamModelAttempt(ctx, target, msgs, opts, s, idleTimeout)
 			if ctx.Err() != nil {
 				return resp, ctx.Err()
 			}
@@ -263,7 +270,7 @@ func retryBackoff(base time.Duration, attempt int) time.Duration {
 	return time.Duration(rand.Int63n(int64(ceil)))
 }
 
-func streamModelAttempt(ctx context.Context, target model.ChatModel, msgs []*message.Msg, opts []model.CallOption, s *replyContentStream) (*model.ChatResponse, bool, error) {
+func streamModelAttempt(ctx context.Context, target model.ChatModel, msgs []*message.Msg, opts []model.CallOption, s *replyContentStream, idleTimeout time.Duration) (*model.ChatResponse, bool, error) {
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch, err := target.ChatStream(callCtx, msgs, opts...)
@@ -285,11 +292,28 @@ func streamModelAttempt(ctx context.Context, target model.ChatModel, msgs []*mes
 		// report it at setup level so it is never retried.
 		return nil, false, errNilStream
 	}
+	// Idle guard: a stream silent for idleTimeout is treated as a transport
+	// failure, so the retry policy above replays it while nothing was
+	// published instead of hanging the reply forever. The timer also covers
+	// the setup->first-chunk gap; the blocking ChatStream setup call itself
+	// relies on the provider client's own transport timeouts.
+	var idleC <-chan time.Time
+	var idleTimer *time.Timer
+	if idleTimeout > 0 {
+		idleTimer = time.NewTimer(idleTimeout)
+		defer idleTimer.Stop()
+		idleC = idleTimer.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, true, ctx.Err()
+		case <-idleC:
+			return nil, true, &transportStreamError{fmt.Errorf("agent: model stream idle for %s", idleTimeout)}
 		case chunk, ok := <-ch:
+			if idleTimer != nil {
+				idleTimer.Reset(idleTimeout)
+			}
 			if !ok {
 				return nil, true, &transportStreamError{fmt.Errorf("agent: model stream closed without a final response")}
 			}
