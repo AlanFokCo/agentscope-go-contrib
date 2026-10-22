@@ -299,6 +299,12 @@ outlive turns by design; the host owns the manager's lifecycle. `Shell`
 delegates the `Bash` permission pipeline under its own tool name, so learned
 rules stay scoped per tool.
 
+The opt-in `web_search` tool (`tool.NewWebSearchTool`) searches the web
+through a host-injected `SearchFunc`, keeping provider credentials and
+ranking outside the library (no new dependency). It is read-only and
+concurrency-safe; results are ranked title/URL/snippet hits, with `limit`
+defaulting to 5 and capped at 10.
+
 Bash/Shell rule matching is conjunctive across subcommands: a compound command
 is allowed only when EVERY subcommand matches an allow rule
 (`tool.MatchAllSubcommands`), while a deny rule fires when ANY subcommand

@@ -87,6 +87,12 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- **`web_search` tool** (`tool.NewWebSearchTool`, codex parity): the model
+  searches the web through a host-injected `SearchFunc`, keeping provider
+  credentials and ranking outside the library — no new dependency. Read-only
+  and concurrency-safe; results are ranked title/URL/snippet hits, with
+  `limit` defaulting to 5 and capped at 10.
+
 - **Model stream idle timeout** (`ModelConfig.StreamIdleTimeout`, codex
   `stream_idle_timeout` parity): a stream silent past the timeout — between
   setup and the first chunk, or between chunks — is treated as a transport
