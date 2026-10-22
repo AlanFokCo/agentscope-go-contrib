@@ -118,6 +118,14 @@ type UnifiedAgent struct {
 	// installed after the reply ends so a swallowed round keeps
 	// accumulating; the next replyLoop's beginTurnStats replaces it.
 	stats *turnStats
+
+	// Background pre-compression (ContextConfig.PrecompressRatio):
+	// precompressRunning marks an in-flight generation; pendingPrecompress
+	// holds a finished result until the hard compression trigger applies or
+	// discards it. Both are guarded by mu. Neither is checkpointed — a
+	// resumed reply simply regenerates.
+	precompressRunning bool
+	pendingPrecompress *precompressResult
 }
 
 // ReactConfig controls the ReAct reasoning-acting loop.

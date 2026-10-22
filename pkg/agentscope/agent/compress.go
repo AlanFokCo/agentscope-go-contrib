@@ -129,6 +129,24 @@ type ContextConfig struct {
 	// CompactStrategyReserveTail (default, also "") or
 	// CompactStrategyFreshWindow. See the constants for the trade-off.
 	CompactStrategy string
+
+	// PrecompressRatio, when > 0 and < TriggerRatio, moves the summarization
+	// latency off the critical path: once the estimated context crosses
+	// ContextSize*PrecompressRatio, the agent generates the summary in a
+	// background goroutine from a snapshot of the current context. When the
+	// hard threshold (TriggerRatio) later triggers — or Compact is called —
+	// a still-valid snapshot result is applied instantly instead of blocking
+	// the reply on a summarization call; a stale or missing result falls
+	// back to the synchronous path. The applied summary covers the snapshot
+	// prefix, so messages appended since the snapshot stay raw: precompression
+	// trades a slightly earlier next compaction for hiding the latency.
+	//
+	// 0 (the default) disables precompression; values >= TriggerRatio are
+	// normalized to 0 by withDefaults. Precompression is unavailable with
+	// WithContentBlockCompaction (the block-level splitter has different
+	// granularity) and never runs the overflow retry or truncation fallback —
+	// a failed background generation is simply discarded.
+	PrecompressRatio float64
 }
 
 // agentDrivenTriggerRatio resolves the effective threshold for a
@@ -167,6 +185,11 @@ func (c *ContextConfig) withDefaults() ContextConfig {
 	}
 	if cfg.CompressionPrompt == "" {
 		cfg.CompressionPrompt = defaultCompressionPrompt
+	}
+	// Precompression must arm strictly below the hard trigger; a ratio that
+	// cannot fire before it is normalized away entirely.
+	if cfg.PrecompressRatio < 0 || cfg.PrecompressRatio >= cfg.TriggerRatio {
+		cfg.PrecompressRatio = 0
 	}
 	if cfg.SummaryTemplate == "" {
 		cfg.SummaryTemplate = defaultSummaryTemplate
@@ -323,6 +346,7 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	// A forced compaction (the exported Compact) skips the threshold check:
 	// the caller has explicitly asked for a summary now.
 	if !force && estimatedTokens < threshold {
+		a.maybeArmPrecompress(ctx, cfg, ctxSize, estimatedTokens)
 		return nil
 	}
 
@@ -344,6 +368,14 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 		"tokens":    estimatedTokens,
 		"threshold": threshold,
 	}).Info("context compression triggered")
+
+	// A background pre-compression (PrecompressRatio) that already finished
+	// against a still-valid snapshot applies instantly, skipping the blocking
+	// summarization call. Stale or missing results fall through to the
+	// synchronous path.
+	if a.applyReadyPrecompress(ctx) {
+		return nil
+	}
 
 	reserveTokens := int(float64(ctxSize) * cfg.ReserveRatio)
 	if cfg.CompactStrategy == CompactStrategyFreshWindow {
@@ -644,21 +676,37 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 	copy(ctxMsgs, a.state.Context)
 	systemPrompt := a.systemPrompt
 	summary := a.state.Summary
+	plan := a.state.Plan
 	a.mu.Unlock()
 
-	baseMsgs := []*message.Msg{message.SystemMsg(a.name, systemPrompt)}
-	if summary != "" {
-		baseMsgs = append(baseMsgs, message.UserMsg(a.name, "[Previous context summary]: "+summary))
-	}
-	// prepareModelInput injects the plan on every call; the split accounting
-	// must count it or the reserve fit and the trigger estimate both run low.
-	if len(a.state.Plan) > 0 {
-		baseMsgs = append(baseMsgs, planPromptMsg(a.name, a.state.Plan))
-	}
+	baseMsgs := compressionBaseMsgs(a.name, systemPrompt, summary, plan)
 	if a.contentBlockCompaction {
 		return a.splitContentBlocksForCompression(ctxMsgs, baseMsgs, reserveTokenBudget, tools)
 	}
+	return a.splitMsgsForCompression(ctxMsgs, baseMsgs, reserveTokenBudget, tools)
+}
 
+// compressionBaseMsgs builds the invariant head every compression accounting
+// must charge against: the system prompt, the previous summary (when any)
+// and the plan tracker message prepareModelInput injects on every call —
+// counting it is what keeps the reserve fit and the trigger estimate honest.
+func compressionBaseMsgs(agentName, systemPrompt, summary string, plan []tool.PlanItem) []*message.Msg {
+	baseMsgs := []*message.Msg{message.SystemMsg(agentName, systemPrompt)}
+	if summary != "" {
+		baseMsgs = append(baseMsgs, message.UserMsg(agentName, "[Previous context summary]: "+summary))
+	}
+	if len(plan) > 0 {
+		baseMsgs = append(baseMsgs, planPromptMsg(agentName, plan))
+	}
+	return baseMsgs
+}
+
+// splitMsgsForCompression splits an explicit context snapshot into the
+// prefix to summarize and the reserved suffix, honoring the reserve token
+// budget and tool-pair integrity. The caller owns the snapshot; the agent's
+// live state is not consulted, so the split is safe to run off the reply
+// goroutine (background pre-compression).
+func (a *UnifiedAgent) splitMsgsForCompression(ctxMsgs, baseMsgs []*message.Msg, reserveTokenBudget int, tools []model.ToolSchema) ([]*message.Msg, []*message.Msg) {
 	if reserveTokenBudget <= 0 {
 		// Emergency path (reserve budget disabled, or the retry after a
 		// split that produced nothing): everything is compressed, including

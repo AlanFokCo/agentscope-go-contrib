@@ -87,6 +87,21 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- **Background pre-compression** (`ContextConfig.PrecompressRatio`): when set
+  below `TriggerRatio`, the agent starts generating the compaction summary in
+  a background goroutine once the estimated context crosses the lower ratio,
+  off the reply's critical path. When the hard trigger later fires (or
+  `Compact` is called), a result whose snapshot is still valid — same base
+  summary, context prefix intact — applies instantly; stale or missing
+  results fall back to the synchronous path. The applied summary covers the
+  snapshot prefix, so messages appended since stay raw (a slightly earlier
+  next compaction in exchange for hidden latency). Background usage flows
+  through the same per-reply accounting as synchronous compression, with a
+  final drain at reply end so a generation finishing during the last model
+  call is still attributed to the reply that caused it. Disabled by default
+  and unavailable with `WithContentBlockCompaction`; a failed background
+  generation is discarded (the synchronous path owns retries and fallback).
+
 - **MCP elicitation** (codex `Op::ResolveElicitation` parity): MCP servers
   can now ask for user input in the middle of a tool call. Set
   `ElicitationHandler` (`mcp.ElicitationHandler`, with transport-neutral

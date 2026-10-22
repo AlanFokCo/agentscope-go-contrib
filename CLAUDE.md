@@ -271,6 +271,18 @@ trailing open tool pair (codex /compact parity). `SummaryMaxTokens` bounds the g
 clamped to [1024, 8192]); over-budget summaries are middle-elided so the
 overview head and next-steps tail survive.
 
+`ContextConfig.PrecompressRatio` (opt-in, must be below `TriggerRatio`)
+moves summarization latency off the reply's critical path: crossing the lower
+ratio starts a background generation from a context snapshot
+([precompress.go](pkg/agentscope/agent/precompress.go)), and the hard trigger
+applies a still-valid result without a blocking model call. Validity is
+structural — same base summary plus the snapshot's boundary message identity
+— so checkpoint rollbacks and interleaved compactions safely discard it; the
+reserved suffix keeps the LIVE message versions so in-place truncation from
+overflow recovery stays in effect. Precompression is off under
+`WithContentBlockCompaction` (the block-level splitter's granularity differs)
+and never retries or truncates on failure — the synchronous path owns that.
+
 `WithPlanTool` registers `update_plan`: the model maintains a step plan
 (at most one `in_progress`) stored in `AgentState.Plan` — checkpointed,
 immune to compression, and re-injected into the model input on every call

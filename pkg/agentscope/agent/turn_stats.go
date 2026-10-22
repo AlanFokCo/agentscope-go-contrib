@@ -71,7 +71,20 @@ func (a *UnifiedAgent) recordIteration(iter int) {
 // event on the swallowed-round path (where escaping is only known via the
 // verdict). last_input_tokens carries the provider-reported context fill of
 // the final model call so hosts can render "tokens left" cheaply.
+//
+// Compression usage the Reason-state drain did not pick up — a background
+// pre-compression may have finished during the final model call — is
+// drained here so the reply that caused it accounts for it: recorded into
+// the stats and surfaced as a model-call-end event first (upstream #2433
+// contract). On the swallowed-round path that event lands after the
+// delivered ReplyEndEvent, same as the turn_stats event itself.
 func (a *UnifiedAgent) emitTurnStats(ctx context.Context, ch chan<- event.Event, replyID string) {
+	if cu := a.takeCompressionUsage(); cu != nil {
+		a.recordModelCallUsage(cu)
+		emit(ctx, ch, event.NewModelCallEndEventWithCache(replyID,
+			cu.InputTokens, cu.OutputTokens,
+			cu.CacheCreationInputTokens, cu.CacheInputTokens))
+	}
 	a.mu.Lock()
 	stats := a.stats
 	lastInput := a.lastModelInputTokens
