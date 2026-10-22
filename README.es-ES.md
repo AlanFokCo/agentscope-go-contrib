@@ -186,6 +186,7 @@ necesarios.
 | [pipeline_multi_agent](examples/pipeline_multi_agent/) | Coordinación con Pipeline y MsgHub |
 | [agent_team](examples/agent_team/) | Coordinación de agentes líder y trabajadores |
 | [mcp](examples/mcp/) | Descubrimiento y llamadas a herramientas MCP |
+| [mcp_streamable](examples/mcp_streamable/) | Cliente MCP Streamable HTTP con un servidor spec en proceso |
 | [a2a_http](examples/a2a_http/) | Comunicación entre agentes por HTTP |
 | [grpc_a2a](examples/grpc_a2a/) | Mensajería TCP con JSON delimitado por líneas; no usa gRPC |
 | [replay](examples/replay/) | Registros de respuestas simuladas y persistencia en archivos |
