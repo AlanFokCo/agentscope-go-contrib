@@ -93,6 +93,14 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   and concurrency-safe; results are ranked title/URL/snippet hits, with
   `limit` defaulting to 5 and capped at 10.
 
+- **User shell commands** (`Conversation.RunUserShellCommand`, codex `!`
+  parity): a user-typed shell command runs outside the model loop through
+  the platform shell with process-group isolation; merged stdout/stderr
+  stream as `user_shell_output` conversation events and a `user_shell_end`
+  event carries exit code and duration. The command never enters model
+  context and, being user-initiated, runs without the permission engine —
+  never route model-generated commands through it.
+
 - **Model stream idle timeout** (`ModelConfig.StreamIdleTimeout`, codex
   `stream_idle_timeout` parity): a stream silent past the timeout — between
   setup and the first chunk, or between chunks — is treated as a transport

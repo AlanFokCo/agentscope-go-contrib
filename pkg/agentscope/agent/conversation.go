@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	agentscope "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/types"
 )
 
@@ -27,6 +30,17 @@ const (
 	// ConversationEventTurnError reports that a queued turn failed to
 	// start. Data carries {"error": string}.
 	ConversationEventTurnError = "conversation_turn_error"
+
+	// ConversationEventUserShellStart marks the start of a user-initiated
+	// shell command. Data carries {"command_id": string, "command": string}.
+	ConversationEventUserShellStart = "user_shell_start"
+	// ConversationEventUserShellOutput streams merged stdout/stderr of a
+	// user shell command. Data carries {"command_id": string, "data": string}.
+	ConversationEventUserShellOutput = "user_shell_output"
+	// ConversationEventUserShellEnd ends a user shell command. Data carries
+	// {"command_id": string, "exit_code": int, "duration_ms": int64} and,
+	// on failure, {"error": string}.
+	ConversationEventUserShellEnd = "user_shell_end"
 )
 
 // interruptedTurnMarkerText is appended to the context after an interrupted
@@ -118,6 +132,11 @@ type Conversation struct {
 	closed   bool
 	wakeCh   chan struct{}
 	loopDone chan struct{}
+
+	// shellWG tracks user-shell goroutines. They forward events from
+	// outside the run loop, so Close must wait for them before closing
+	// the events channel.
+	shellWG sync.WaitGroup
 }
 
 // NewConversation starts an EXPERIMENTAL persistent conversation on the
@@ -208,7 +227,8 @@ func (c *Conversation) Compact(ctx context.Context) error {
 }
 
 // Close interrupts any active turn, stops the conversation and releases the
-// agent. The events channel is closed once the run loop has exited.
+// agent. The events channel is closed once the run loop and any in-flight
+// user shell commands have exited.
 func (c *Conversation) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -219,6 +239,7 @@ func (c *Conversation) Close() error {
 	c.mu.Unlock()
 	c.cancel()
 	<-c.loopDone
+	c.shellWG.Wait()
 	close(c.events)
 	c.agent.mu.Lock()
 	if c.agent.activeConv == c {
@@ -226,6 +247,54 @@ func (c *Conversation) Close() error {
 	}
 	c.agent.mu.Unlock()
 	return nil
+}
+
+// RunUserShellCommand executes a user-typed shell command (codex's "!"
+// escape) outside the model loop: the command runs through the platform
+// shell, its merged output streams as user_shell_output events, and a
+// user_shell_end event carries the exit code. The command never enters
+// model context. It is user-initiated, so no permission prompt applies;
+// it may run during an active turn (auxiliary output) or while idle.
+// The call itself is non-blocking — execution reports through Events().
+// A zero timeout leaves the conversation lifetime as the only bound.
+//
+// The events carry the command ID in their data payload and in the
+// CustomEvent's reply-ID field, so consumers can correlate start, output
+// and end for one command.
+func (c *Conversation) RunUserShellCommand(command string, timeout time.Duration) (string, error) {
+	if strings.TrimSpace(command) == "" {
+		return "", fmt.Errorf("agent: user shell command is empty")
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return "", ErrConversationClosed
+	}
+	c.shellWG.Add(1)
+	c.mu.Unlock()
+
+	commandID := agentscope.GenerateID()
+	c.forward(event.NewCustomEvent(commandID, ConversationEventUserShellStart,
+		map[string]any{"command_id": commandID, "command": command}))
+
+	go func() {
+		defer c.shellWG.Done()
+		start := time.Now()
+		code, err := tool.RunUserShell(c.ctx, command, timeout, func(data []byte) {
+			c.forward(event.NewCustomEvent(commandID, ConversationEventUserShellOutput,
+				map[string]any{"command_id": commandID, "data": string(data)}))
+		})
+		value := map[string]any{
+			"command_id":  commandID,
+			"exit_code":   code,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}
+		if err != nil {
+			value["error"] = err.Error()
+		}
+		c.forward(event.NewCustomEvent(commandID, ConversationEventUserShellEnd, value))
+	}()
+	return commandID, nil
 }
 
 // run is the single consumer of the operation queue.

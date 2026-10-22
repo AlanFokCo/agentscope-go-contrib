@@ -81,6 +81,15 @@ terminal events on the conversation context so an interrupted turn's
 the next model call. While a conversation is active, direct
 `Reply`/`ReplyStream`/`ResumeReplyStream` are rejected.
 
+`Conversation.RunUserShellCommand` runs a user-typed shell command outside
+the model loop (codex `!` parity): platform shell with process-group
+isolation, merged output streamed as `user_shell_output` events and a
+`user_shell_end` carrying exit code and duration. It never enters model
+context and bypasses the permission engine by design (the user approved by
+typing it) — never route model-generated commands through it. `Close`
+cancels in-flight commands and waits for their goroutines before closing
+the event stream.
+
 `Middleware` provides reply, reasoning, model-call, acting, system-prompt,
 compression and permission hooks, plus tool registration. `BaseMiddleware`
 provides defaults. System-prompt transformation is a pipeline; the other hooks
