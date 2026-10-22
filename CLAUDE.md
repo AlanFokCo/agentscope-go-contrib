@@ -314,6 +314,16 @@ ranking outside the library (no new dependency). It is read-only and
 concurrency-safe; results are ranked title/URL/snippet hits, with `limit`
 defaulting to 5 and capped at 10.
 
+MCP clients support server-initiated elicitation (codex
+`Op::ResolveElicitation` parity): with an `ElicitationHandler` set on
+`mcp.StdioConfig` or `streamablehttp.Config`, the client declares the
+elicitation capability at initialize and resolves `elicitation/create`
+requests mid tool call through the transport-neutral `mcp.ElicitationHandler`
+(`ElicitRequest`/`ElicitResponse`, actions accept/decline/cancel). Stdio
+answers unknown server requests with -32601 and runs the handler on the wire
+read loop (other calls block meanwhile); the bare-POST `HttpClient` has no
+inbound channel and does not support elicitation.
+
 Bash/Shell rule matching is conjunctive across subcommands: a compound command
 is allowed only when EVERY subcommand matches an allow rule
 (`tool.MatchAllSubcommands`), while a deny rule fires when ANY subcommand

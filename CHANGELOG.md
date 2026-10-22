@@ -87,6 +87,20 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- **MCP elicitation** (codex `Op::ResolveElicitation` parity): MCP servers
+  can now ask for user input in the middle of a tool call. Set
+  `ElicitationHandler` (`mcp.ElicitationHandler`, with transport-neutral
+  `ElicitRequest`/`ElicitResponse` carrying accept/decline/cancel plus form
+  content) on `mcp.StdioConfig` or `streamablehttp.Config`; the client then
+  declares the elicitation capability during initialize and resolves
+  `elicitation/create` requests through the handler. Without a handler the
+  capability stays undeclared and such requests fail fast with -32601, as do
+  unknown server-initiated methods on stdio — previously a server request
+  with a string ID was silently dropped, hanging the server's in-flight tool
+  call. The stdio handler runs synchronously on the wire read loop (other
+  calls block meanwhile); the bare-POST `mcp.HttpClient` has no inbound
+  channel and does not support elicitation.
+
 - **`web_search` tool** (`tool.NewWebSearchTool`, codex parity): the model
   searches the web through a host-injected `SearchFunc`, keeping provider
   credentials and ranking outside the library — no new dependency. Read-only
