@@ -72,10 +72,13 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]any) (*Tool
 	}
 	limit := defaultSearchLimit
 	if v, ok := args["limit"].(float64); ok && v > 0 {
-		limit = int(v)
-		if limit > maxSearchLimit {
-			limit = maxSearchLimit
+		// Clamp in the float domain: converting an out-of-range float64 to
+		// int is implementation-defined on 32-bit platforms and could defeat
+		// a post-conversion bounds check (CodeQL go/incorrect-integer-conversion).
+		if v > maxSearchLimit {
+			v = maxSearchLimit
 		}
+		limit = int(v)
 	}
 	results, err := t.search(ctx, query, limit)
 	if err != nil {
