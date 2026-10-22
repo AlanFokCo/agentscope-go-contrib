@@ -243,6 +243,25 @@ UI's `/compact`), skipping the trigger threshold via an explicit force flag —
 not a zero ratio, which `withDefaults` would normalize away. It is contracted
 for use between replies; see [manual compaction](docs/tools.md#manual-compaction).
 
+`ContextConfig.CompactStrategy` selects the post-compression layout:
+`reserve_tail` (default) keeps the recent messages fitting `ReserveRatio`;
+`fresh_window` folds the history into the summary, keeping at most the
+trailing open tool pair (codex /compact parity). `SummaryMaxTokens` bounds the generated summary (default: window/32
+clamped to [1024, 8192]); over-budget summaries are middle-elided so the
+overview head and next-steps tail survive.
+
+`WithPlanTool` registers `update_plan`: the model maintains a step plan
+(at most one `in_progress`) stored in `AgentState.Plan` — checkpointed,
+immune to compression, and re-injected into the model input on every call
+(the compression split accounting counts the injected message). The tool is
+read-only for permission purposes and deliberately NOT concurrency-safe:
+updates are ordered state transitions, and batching would scramble
+last-write-wins against event order. Each successful update emits a
+`plan_updated` custom event. `WithContextRemainingTool` registers
+`get_context_remaining`, reporting the usage-grounded remaining budget as
+`{"tokens_left": N|null}`. Both tools follow the compress_context wiring
+pattern: the tool validates, a callback into the agent mutates state.
+
 ### Tools, permissions and workspace boundaries
 
 Tools implement `tool.Tool`, commonly by embedding `BaseTool`. The toolkit and

@@ -21,6 +21,33 @@ const defaultContextSize = 128000
 // ContextConfig.withDefaults and by reactive overflow recovery.
 const defaultToolResultLimit = 50000
 
+// CompactStrategy values for ContextConfig.CompactStrategy.
+const (
+	// CompactStrategyReserveTail keeps the most recent messages fitting
+	// ReserveRatio next to the summary (the default, and the historical
+	// behavior): recent tool results stay directly visible at the cost of a
+	// smaller post-compaction window.
+	CompactStrategyReserveTail = "reserve_tail"
+	// CompactStrategyFreshWindow compresses the ENTIRE history into the
+	// summary and continues with a clean window (codex /compact parity):
+	// maximum room for new work, and no stale tool results competing with
+	// the summary for attention.
+	CompactStrategyFreshWindow = "fresh_window"
+)
+
+// summaryMaxTokens resolves the summary budget: SummaryMaxTokens when set,
+// else window/32 clamped to [1024, 8192]. The clamp keeps tiny windows
+// summarizable and huge windows from producing bloated summaries.
+func summaryMaxTokens(cfg *ContextConfig, ctxSize int) int {
+	if cfg.SummaryMaxTokens > 0 {
+		return cfg.SummaryMaxTokens
+	}
+	if ctxSize <= 0 {
+		return 4096
+	}
+	return min(max(ctxSize/32, 1024), 8192)
+}
+
 var defaultSummarySchema = json.RawMessage(`{
 	"type": "object",
 	"properties": {
@@ -53,6 +80,10 @@ const defaultCompressionPrompt = "<system-hint>You have been working on the task
 	"Now write a continuation summary that will allow you to resume " +
 	"work efficiently in a future context window where the " +
 	"conversation history will be replaced with this summary. " +
+	"Keep the summary within its token budget: the new window must have " +
+	"room for the actual work. Preserve exact file paths, command lines, " +
+	"identifiers and error messages the next context needs to act without " +
+	"re-discovery; do not paraphrase them into vague prose. " +
 	"Your summary should be structured, concise, and actionable." +
 	"</system-hint>"
 
@@ -87,6 +118,17 @@ type ContextConfig struct {
 	// not already done. 0 (the default) means TriggerRatio/2; values above
 	// TriggerRatio are clamped down to it.
 	AgentDrivenTriggerRatio float64
+
+	// SummaryMaxTokens bounds the generated summary (0 = derived: window/32
+	// clamped to [1024, 8192]). An over-budget summary is middle-elided —
+	// the template keeps the task overview at the head and the next steps
+	// near the tail, so the middle loses the least.
+	SummaryMaxTokens int
+
+	// CompactStrategy selects the window layout after compression:
+	// CompactStrategyReserveTail (default, also "") or
+	// CompactStrategyFreshWindow. See the constants for the trade-off.
+	CompactStrategy string
 }
 
 // agentDrivenTriggerRatio resolves the effective threshold for a
@@ -304,9 +346,25 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 	}).Info("context compression triggered")
 
 	reserveTokens := int(float64(ctxSize) * cfg.ReserveRatio)
+	if cfg.CompactStrategy == CompactStrategyFreshWindow {
+		// Fresh window: reserve as little as possible. A budget of 1 — NOT 0,
+		// which would take the emergency path — routes the split through the
+		// tool-pair repair machinery, so an in-flight call (e.g. the
+		// compress_context tool call itself when the model drives compaction
+		// mid-turn) is never summarized away from under its pending result;
+		// providers reject an orphan tool_result outright. With nothing in
+		// flight the tail is empty and the window truly starts fresh.
+		reserveTokens = 1
+	}
 	msgsToCompress, msgsToReserve := a.splitContextForCompression(reserveTokens, toolSchemas)
 
 	if len(msgsToCompress) == 0 {
+		if cfg.CompactStrategy == CompactStrategyFreshWindow {
+			// Degenerate counter (messages cost ~0 tokens): nothing can be
+			// split off safely. A no-op beats the zero-reserve fallback,
+			// which would compress in-flight pairs.
+			return nil
+		}
 		logrus.WithField("agent", a.name).Warn("reserve ratio too large, falling back to reserve_ratio=0")
 		msgsToCompress, msgsToReserve = a.splitContextForCompression(0, toolSchemas)
 	}
@@ -367,6 +425,18 @@ func (a *UnifiedAgent) compressContextImpl(ctx context.Context, cfg *ContextConf
 		logrus.WithError(err).WithField("agent", a.name).
 			Warn("summary formatting failed; falling back to truncation with previous summary")
 		return a.fallbackTruncateKeepSummary(ctx, msgsToCompress, msgsToReserve)
+	}
+	// Enforce the summary budget: a runaway summary silently re-inflates the
+	// window it just freed. Middle-elision keeps the overview head and the
+	// next-steps tail, the two ends the resumed context needs most.
+	if budget := summaryMaxTokens(cfg, ctxSize); budget > 0 {
+		if truncated, did := TruncateToolResult(newSummary, budget); did {
+			logrus.WithFields(logrus.Fields{
+				"agent":  a.name,
+				"budget": budget,
+			}).Warn("summary exceeded budget; middle-elided")
+			newSummary = truncated
+		}
 	}
 
 	// Offload the compressed context to workspace if offloader is set
@@ -579,6 +649,11 @@ func (a *UnifiedAgent) splitContextForCompression(reserveTokenBudget int, tools 
 	baseMsgs := []*message.Msg{message.SystemMsg(a.name, systemPrompt)}
 	if summary != "" {
 		baseMsgs = append(baseMsgs, message.UserMsg(a.name, "[Previous context summary]: "+summary))
+	}
+	// prepareModelInput injects the plan on every call; the split accounting
+	// must count it or the reserve fit and the trigger estimate both run low.
+	if len(a.state.Plan) > 0 {
+		baseMsgs = append(baseMsgs, planPromptMsg(a.name, a.state.Plan))
 	}
 	if a.contentBlockCompaction {
 		return a.splitContentBlocksForCompression(ctxMsgs, baseMsgs, reserveTokenBudget, tools)

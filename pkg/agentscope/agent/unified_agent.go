@@ -94,7 +94,11 @@ type UnifiedAgent struct {
 	// agentDrivenCompression registers the compress_context tool so the
 	// model itself can trigger compression (upstream #2143).
 	agentDrivenCompression bool
-	modelStreaming         bool
+	// planToolEnabled / contextRemainingEnabled register the update_plan and
+	// get_context_remaining tools (see WithPlanTool/WithContextRemainingTool).
+	planToolEnabled         bool
+	contextRemainingEnabled bool
+	modelStreaming          bool
 
 	// activeConv, when non-nil, is the Conversation owning this agent:
 	// direct Reply/ReplyStream/ResumeReplyStream calls are rejected for the
@@ -138,6 +142,9 @@ type AgentState struct {
 	TasksCtx        *TasksStateContext  `json:"tasks_context,omitempty"`
 	MiddlewareState map[string]any      `json:"middleware_context,omitempty"`
 	ReadCacheData   json.RawMessage     `json:"read_cache_data,omitempty"`
+	// Plan is the current update_plan tracker state (see WithPlanTool). It
+	// lives outside Context so compression and crash-resume preserve it.
+	Plan []tool.PlanItem `json:"plan,omitempty"`
 }
 
 // ToolStateContext captures which tool groups are active for serialization.
@@ -329,6 +336,13 @@ func NewUnifiedAgent(name, systemPrompt string, m model.ChatModel, opts ...Agent
 	if a.agentDrivenCompression && a.toolkit != nil {
 		a.toolkit.AddGroup("context_management",
 			tool.NewCompressContextTool(a.compressContextForTool))
+	}
+	// Same late-registration rationale for the plan and context-budget tools.
+	if a.planToolEnabled && a.toolkit != nil {
+		a.toolkit.AddGroup("plan", tool.NewUpdatePlanTool(a.updatePlanFromTool))
+	}
+	if a.contextRemainingEnabled && a.toolkit != nil {
+		a.toolkit.AddGroup("context_budget", tool.NewContextRemainingTool(a.contextRemainingForTool))
 	}
 	return a
 }
@@ -1417,7 +1431,11 @@ func (a *UnifiedAgent) executeTool(
 		ch != nil && a.engine != nil && ctx.Value(escapeRetriedKey{}) == nil {
 		return a.handleWorkspaceEscape(ctx, ch, replyID, tc, actingHandler, esc, outputText)
 	}
-	return a.emitToolResultWithExtra(ctx, ch, replyID, tc, resultState, outputText, extra, toolMeta)
+	outcome := a.emitToolResultWithExtra(ctx, ch, replyID, tc, resultState, outputText, extra, toolMeta)
+	// update_plan surfaces a plan_updated custom event so hosts can render
+	// the tracker live; the metadata marker travels with the tool response.
+	emitPlanUpdateIfPresent(ctx, ch, replyID, resultState, toolMeta)
+	return outcome
 }
 
 // executeStreamingTool runs a StreamingTool and emits incremental events.
@@ -1644,6 +1662,11 @@ func (a *UnifiedAgent) prepareModelInput(ctx context.Context) []*message.Msg {
 
 	if a.state.Summary != "" {
 		msgs = append(msgs, message.UserMsg(a.name, "[Previous context summary]: "+a.state.Summary))
+	}
+	// The plan lives outside Context precisely so it survives compression;
+	// re-inject it on every call or the model loses its tracker after one.
+	if len(a.state.Plan) > 0 {
+		msgs = append(msgs, planPromptMsg(a.name, a.state.Plan))
 	}
 
 	msgs = append(msgs, a.state.Context...)

@@ -73,6 +73,36 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
 
 ### Added
 
+- **`update_plan` tool** (`agent.WithPlanTool`, codex parity): the model
+  maintains a visible step plan — `{explanation?, plan: [{step, status}]}`,
+  at most one `in_progress` — stored in `AgentState.Plan` (new checkpointed
+  field), so the tracker survives compression and crash-resume. The plan is
+  re-injected into the model input after the summary on every call (and
+  counted in the compression split accounting), and each successful update
+  emits a `plan_updated` custom event for hosts to render live. The tool is
+  read-only for permission purposes (explore mode does not gate planning) and
+  deliberately not concurrency-safe: updates are ordered state transitions.
+
+- **`get_context_remaining` tool** (`agent.WithContextRemainingTool`, codex
+  parity): reports `{"tokens_left": N|null}` — the usage-grounded estimate
+  (max of the byte heuristic and the last provider-reported input tokens)
+  subtracted from the resolved context window. The model can check its budget
+  before starting an expensive subtask or deciding to compress early.
+
+- **Compression quality knobs** (`ContextConfig.CompactStrategy`,
+  `ContextConfig.SummaryMaxTokens`): `CompactStrategyFreshWindow` folds the
+  entire history into the summary instead of reserving a tail of recent
+  messages (codex `/compact` parity; default stays `reserve_tail`).
+  `SummaryMaxTokens` bounds the generated summary (default: window/32 clamped
+  to [1024, 8192]) with middle-elision on overflow, so a runaway summary
+  cannot silently re-inflate the window it freed. The default compression
+  prompt now carries a budget sentence and instructs preserving exact file
+  paths, commands and error messages verbatim. Fresh-window compaction never
+  strands an in-flight tool call: the split reserves the trailing open pair
+  (a zero reserve would orphan the result that lands right after, which
+  providers reject outright) — with nothing in flight at most the trailing
+  message survives.
+
 - **Durable permission rules learned from approvals**
   (`permission.RuleStore`, `Engine.SetRuleStore`,
   `Engine.AddRulePersistent`, `config.NewSettingsRuleStore`): when a user
