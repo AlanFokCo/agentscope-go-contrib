@@ -72,13 +72,19 @@ func (t *webSearchTool) Execute(ctx context.Context, args map[string]any) (*Tool
 	}
 	limit := defaultSearchLimit
 	if v, ok := args["limit"].(float64); ok && v > 0 {
-		// Clamp in the float domain: converting an out-of-range float64 to
-		// int is implementation-defined on 32-bit platforms and could defeat
-		// a post-conversion bounds check (CodeQL go/incorrect-integer-conversion).
+		// Clamp in the float domain first so even a huge literal (e.g.
+		// 1e300) converts deterministically; then keep an integer-typed
+		// bounds check on the narrowing conversion — that is the guard form
+		// CodeQL's go/incorrect-integer-conversion recognizes (float
+		// comparisons do not count).
 		if v > maxSearchLimit {
 			v = maxSearchLimit
 		}
-		limit = int(v)
+		if n := int64(v); n > maxSearchLimit {
+			limit = maxSearchLimit
+		} else {
+			limit = int(n)
+		}
 	}
 	results, err := t.search(ctx, query, limit)
 	if err != nil {

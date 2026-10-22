@@ -49,20 +49,24 @@ func TestWebSearchTool_Results(t *testing.T) {
 
 // A limit far beyond int32 range must still clamp: on 32-bit platforms the
 // float64→int conversion of an unclamped value is implementation-defined and
-// could wrap below maxSearchLimit, defeating a post-conversion check.
+// could wrap below maxSearchLimit, defeating a post-conversion check. 1e300
+// additionally exceeds int64 range, so even an int64 intermediate needs the
+// float-domain clamp first.
 func TestWebSearchTool_HugeLimitClamps(t *testing.T) {
-	var gotLimit int
-	toolUnderTest := NewWebSearchTool(func(_ context.Context, _ string, limit int) ([]SearchResult, error) {
-		gotLimit = limit
-		return nil, nil
-	})
-	if _, err := toolUnderTest.Execute(context.Background(), map[string]any{
-		"query": "golang", "limit": float64(uint64(1) << 62),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if gotLimit != maxSearchLimit {
-		t.Errorf("huge limit not clamped: %d", gotLimit)
+	for _, in := range []float64{float64(uint64(1) << 62), 1e300} {
+		var gotLimit int
+		toolUnderTest := NewWebSearchTool(func(_ context.Context, _ string, limit int) ([]SearchResult, error) {
+			gotLimit = limit
+			return nil, nil
+		})
+		if _, err := toolUnderTest.Execute(context.Background(), map[string]any{
+			"query": "golang", "limit": in,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if gotLimit != maxSearchLimit {
+			t.Errorf("limit %g not clamped: %d", in, gotLimit)
+		}
 	}
 }
 
