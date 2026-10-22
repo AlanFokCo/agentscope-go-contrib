@@ -71,6 +71,20 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   invocations degrade to Ask instead of inheriting an allow rule. Plain
   single commands are unaffected.
 
+### Changed — project instructions
+
+- **Layered instruction files (behavior change, codex AGENTS.md parity):**
+  `LoadProjectConfig` now collects instruction files (CLAUDE.md / AGENTS.md /
+  README.md, first match per directory) from the project root down to the
+  working directory and concatenates them root→cwd, so deeper, more specific
+  instructions land last. The layering anchors at the nearest ancestor with a
+  `.git` entry instead of stopping at the first directory carrying an
+  instruction file — a nested CLAUDE.md stacks on the root one rather than
+  replacing it. Without any `.git`, the historical single-file lookup via
+  `FindProjectRoot` applies. The concatenated payload is capped at 32 KiB
+  (rune-boundary cut with a truncation marker) to keep oversized docs from
+  crowding out the working context.
+
 ### Added
 
 - **`update_plan` tool** (`agent.WithPlanTool`, codex parity): the model
@@ -102,6 +116,14 @@ releases can be verified with `git log <prev-tag>..<tag> --oneline`.
   (a zero reserve would orphan the result that lands right after, which
   providers reject outright) — with nothing in flight at most the trailing
   message survives.
+
+- **`UnifiedAgent.ForkSession`** (codex thread-fork parity): branches the
+  current session by snapshotting state through the checkpoint serialization
+  path and persisting it under a new session ID — context, summary, plan and
+  permission grants included — without touching the live session or its
+  checkpoint. The fork starts at a clean reply boundary (reply ID and
+  recovery counters cleared) and is a between-replies operation by contract.
+  Pair with `LoadCheckpoint` + `WithState` to run the branch.
 
 - **Durable permission rules learned from approvals**
   (`permission.RuleStore`, `Engine.SetRuleStore`,

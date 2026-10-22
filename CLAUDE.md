@@ -101,6 +101,11 @@ checkpoint schema compatibility and pending-tool state when changing recovery.
 Read [checkpoint tests](pkg/agentscope/agent/checkpoint_test.go) and
 [loop bridge tests](pkg/agentscope/agent/loop_bridge_test.go) for those boundaries.
 
+`UnifiedAgent.ForkSession` branches a session by persisting a checkpoint-fidelity
+snapshot under a new session ID (context, summary, plan and permission grants;
+reply ID and recovery counters cleared). It is a between-replies operation and
+requires a `StateSaver`; run the branch via `LoadCheckpoint` + `WithState`.
+
 The `app` chat handlers register a per-run cancel handle in `ChatRunRegistry`.
 Session cancel also preserves the App's registered background-task cancellation.
 An internal context scope joins accepted Agent cores (including children sharing
@@ -297,6 +302,11 @@ and degrade to Ask. Learned "always allow" rules persist through
 `.agentscope/settings.local.json`, which `LoadProjectConfig` reads back next
 session); `Engine.AddRulePersistent` refuses to apply a rule its store could
 not durably record.
+
+Project instructions layer codex-style: `LoadProjectConfig` concatenates
+CLAUDE.md/AGENTS.md/README.md (first match per directory) from the `.git`
+root down to the working directory, deeper files last, capped at 32 KiB. An
+instruction file is content, not a project-root boundary.
 
 File and command tools can use a `tool.Backend` from the context.
 `workspace.NewToolBackend` adapts a workspace for use with `tool.WithBackend`.
